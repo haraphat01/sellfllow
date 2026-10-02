@@ -108,6 +108,23 @@ conversation up to `order_confirmation`; `payment_pending`/`paid` are
 server-only. Reaching purchase intent sets `sales_outcome =
 interested_not_purchased` (used by follow-ups in Phase 8).
 
+## Business knowledge (Q&A), not training
+
+SellFlow doesn't fine-tune a model per business. Each reply is built from that business's own data, looked up live:
+- its profile and policies (Settings → AI assistant)
+- its catalogue and stock (Products)
+- its **Q&A knowledge base** (Settings → **Q&A**)
+
+Changes apply on the next message, with no training cost, and businesses' data never mixes.
+
+* **Q&A:** the merchant writes questions in customers' words, answers in their own words, and optional extra search words (local names, Pidgin, misspellings). Stored in `business_faqs`, with RLS: members read, `settings.manage` writes.
+* **Search:** the AI tool `search_business_info` calls `search_business_faqs()`. It uses English stemming (deliver ~ delivery), OR-ed words, keyword matches and trigram similarity on the question, then returns the top 3 active answers.
+* **Rules:** the prompt says to use the Q&A for "how the business works" questions and answer only from what it returns. When nothing matches, the AI says it isn't sure and offers the team.
+* **Prices in answers:** amounts written in an answer (e.g. "₦2,000 to Ilorin") are returned as `amounts_minor`, so the price guard accepts them. Any other amount is still blocked, and the reply is replaced by the hand-off line.
+* **Try it:** the Q&A page shows exactly what the AI finds for a customer's question.
+
+Code: `src/services/knowledge/faqs.service.ts`, `src/components/knowledge/faq-manager.tsx`, migration `20261003090000_business_faqs.sql`. Tests: `supabase/tests/business_faqs.sql`, `tests/unit/faqs.test.ts`, `tests/integration/faqs.int.test.ts`.
+
 ## Safety
 
 * **Prompt layering:** SellFlow rules (priority) → merchant profile/policies as

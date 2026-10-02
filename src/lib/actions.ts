@@ -13,11 +13,12 @@ import { PaymentError } from "@/services/payments/payments.service";
 import { BillingError } from "@/services/billing/billing.service";
 import { AdminError } from "@/services/admin/admin.service";
 import { PayoutError } from "@/services/payments/payouts.service";
+import { FaqError } from "@/services/knowledge/faqs.service";
 
 export type { ActionResult, FormState } from "@/lib/action-types";
 
 
-const EXPECTED = [AuthorizationError, PlanLimitError, ProductError, TeamError, ConversationError, CustomerError, OutboundMessageError, OrderError, PaymentError, BillingError, AdminError, PayoutError];
+const EXPECTED = [AuthorizationError, PlanLimitError, ProductError, TeamError, ConversationError, CustomerError, OutboundMessageError, OrderError, PaymentError, BillingError, AdminError, PayoutError, FaqError];
 
 /** Converts expected domain errors into user messages; logs and hides everything else. */
 export function toActionError(err: unknown, context: Record<string, unknown> = {}): string {

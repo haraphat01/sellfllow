@@ -9,6 +9,7 @@ const TABS = [
   { href: "/settings", label: "Business" },
   { href: "/settings/whatsapp", label: "WhatsApp" },
   { href: "/settings/ai", label: "AI assistant" },
+  { href: "/settings/knowledge", label: "Q&A" },
   { href: "/settings/payments", label: "Payments" },
   { href: "/settings/automation", label: "Automation" },
   { href: "/settings/team", label: "Team" },

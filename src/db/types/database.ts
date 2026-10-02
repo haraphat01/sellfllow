@@ -529,6 +529,53 @@ export type Database = {
           },
         ]
       }
+      business_faqs: {
+        Row: {
+          answer: string
+          business_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          keywords: string[]
+          question: string
+          search_vector: unknown
+          updated_at: string
+        }
+        Insert: {
+          answer: string
+          business_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          keywords?: string[]
+          question: string
+          search_vector?: unknown
+          updated_at?: string
+        }
+        Update: {
+          answer?: string
+          business_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          keywords?: string[]
+          question?: string
+          search_vector?: unknown
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "business_faqs_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       business_invitations: {
         Row: {
           accepted_at: string | null
@@ -2490,6 +2537,15 @@ export type Database = {
         Returns: boolean
       }
       schedule_follow_ups: { Args: { p_limit?: number }; Returns: Json }
+      search_business_faqs: {
+        Args: { p_business_id: string; p_limit?: number; p_query: string }
+        Returns: {
+          answer: string
+          id: string
+          question: string
+          score: number
+        }[]
+      }
       search_products: {
         Args: { p_business_id: string; p_limit?: number; p_query: string }
         Returns: {

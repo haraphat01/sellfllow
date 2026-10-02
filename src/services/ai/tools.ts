@@ -9,6 +9,7 @@ import { formatVariantOptions } from "@/lib/products/schema";
 import type { DbClient } from "@/lib/supabase/types";
 import type { Enums, Json } from "@/db/types/database";
 import { getPlan, isOverLimit } from "@/services/billing/limits";
+import { searchFaqs } from "@/services/knowledge/faqs.service";
 import { cancelOrder, createOrder, OrderError, quoteOrder } from "@/services/orders/orders.service";
 import { bankTransferDetails, getBankTransferSettings, latestReceiptMessage, narrationFor, recordPaymentClaim } from "@/services/payments/bank-transfer.service";
 import { createPaymentLink, PaymentError, refreshOrderPayment } from "@/services/payments/payments.service";
@@ -296,7 +297,30 @@ export function createSalesTools(ctx: ToolContext): ToolSet {
       }),
   });
 
-  const base = { search_products, get_product, check_inventory, get_business_policy, get_customer, update_conversation_state, handoff_to_human };
+  const search_business_info = tool({
+    description:
+      "Search the business's own Q&A: pickup, delivery areas, opening hours, ingredients, sizes, care, warranty, custom orders, and other questions about how the business works. Answer only from what it returns.",
+    inputSchema: z.object({ question: z.string().trim().min(2).max(300).describe("The customer's question, in their words") }),
+    execute: (input) =>
+      record(ctx, "search_business_info", input, async () => {
+        const hits = await searchFaqs(db, ctx.businessId, input.question, 3);
+        if (!hits.length) {
+          return { found: false, note: "The business's Q&A doesn't cover this. Don't guess: say you're not sure, and offer to connect them with the team (handoff_to_human) if it matters to them." };
+        }
+        return {
+          found: true,
+          answers: hits.map((h) => ({
+            question: h.question,
+            answer: h.answer,
+            // Prices written in the business's own answers count as grounded facts.
+            amounts_minor: extractAmountsMinor(h.answer),
+          })),
+          note: "Use only answers that actually address the customer's question, and don't add details that aren't in them.",
+        };
+      }),
+  });
+
+  const base = { search_products, get_product, check_inventory, get_business_policy, search_business_info, get_customer, update_conversation_state, handoff_to_human };
   if (!ctx.capabilities.orders) return base;
   return { ...base, ...createOrderTools(ctx) };
 }
