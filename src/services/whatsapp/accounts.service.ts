@@ -106,8 +106,8 @@ export async function connectWhatsAppAccount(
       await wa.registerPhoneNumber(params.phoneNumberId, pin);
       await storeCredential(admin, params.businessId, pinLabel(params.phoneNumberId), pin);
     } catch (err) {
-      lastError = `Phone number registration failed: ${err instanceof Error ? err.message : String(err)}`;
-      log.warn("whatsapp.connect.register_failed", { error: lastError });
+      lastError = registrationErrorMessage(err);
+      log.warn("whatsapp.connect.register_failed", { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -145,6 +145,53 @@ export async function connectWhatsAppAccount(
   });
   log.info("whatsapp.connected", { whatsapp_account_id: account.id, status: account.status });
   return account;
+}
+
+/** Meta error 133005: the number already has a two-step verification PIN and it didn't match. */
+const PIN_MISMATCH = 133005;
+
+export const REGISTRATION_PREFIX = "Registration incomplete:";
+
+function registrationErrorMessage(err: unknown) {
+  if (err instanceof GraphApiError && err.code === PIN_MISMATCH) {
+    return `${REGISTRATION_PREFIX} this number already has a two-step verification PIN. Enter it below to finish registration.`;
+  }
+  return `${REGISTRATION_PREFIX} Meta couldn't register the number (${err instanceof Error ? err.message : String(err)}). Try again below.`;
+}
+
+/**
+ * Finishes Cloud API registration for a connected number using the
+ * business's own two-step verification PIN (numbers that already have one
+ * reject the random PIN used during signup). Caller must be authorised.
+ */
+export async function registerWhatsAppNumber(admin: DbClient, p: { businessId: string; accountId: string; pin: string; userId: string }) {
+  if (!/^[0-9]{6}$/.test(p.pin)) throw new WhatsAppConnectionError("The PIN is 6 digits.");
+  const { wa, phoneNumberId } = await getClientForAccount(admin, p.businessId, p.accountId);
+  try {
+    await wa.registerPhoneNumber(phoneNumberId, p.pin);
+  } catch (err) {
+    if (err instanceof GraphApiError && err.code === PIN_MISMATCH) {
+      throw new WhatsAppConnectionError(
+        "That PIN doesn't match. Check or reset it in WhatsApp Manager → Account tools → Phone numbers → your number → Settings → Two-step verification, then try again.",
+      );
+    }
+    if (err instanceof GraphApiError) throw new WhatsAppConnectionError(`Meta couldn't register the number: ${err.message}`);
+    throw err;
+  }
+  await storeCredential(admin, p.businessId, pinLabel(phoneNumberId), p.pin);
+  const { error } = await admin
+    .from("whatsapp_accounts")
+    .update({ status: "connected", last_error: null, connected_at: new Date().toISOString() })
+    .eq("business_id", p.businessId)
+    .eq("id", p.accountId);
+  if (error) throw error;
+  await admin.from("audit_logs").insert({
+    business_id: p.businessId,
+    actor_user_id: p.userId,
+    action: "whatsapp.number_registered",
+    entity_type: "whatsapp_account",
+    entity_id: p.accountId,
+  });
 }
 
 export async function disconnectWhatsAppAccount(admin: DbClient, businessId: string, accountId: string) {

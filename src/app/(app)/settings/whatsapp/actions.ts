@@ -9,7 +9,7 @@ import { authorize } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { embeddedSignupSchema, manualConnectSchema, testMessageSchema } from "@/lib/validation/whatsapp";
 import { exchangeSignupCode, GraphApiError } from "@/lib/whatsapp/graph";
-import { connectWhatsAppAccount, disconnectWhatsAppAccount, WhatsAppConnectionError } from "@/services/whatsapp/accounts.service";
+import { connectWhatsAppAccount, disconnectWhatsAppAccount, registerWhatsAppNumber, WhatsAppConnectionError } from "@/services/whatsapp/accounts.service";
 import { OutboundMessageError, sendTemplateToNumber } from "@/services/whatsapp/outbound.service";
 
 function message(err: unknown, action: string) {
@@ -104,5 +104,21 @@ export async function sendTestMessageAction(input: { accountId: string; to: stri
     return { ok: true, message: "Test message sent. Reply to it from your phone to see it arrive." };
   } catch (err) {
     return { ok: false, error: message(err, "whatsapp.test") };
+  }
+}
+
+/** Finishes registration with the number's existing two-step verification PIN. */
+export async function registerNumberAction(input: { accountId: string; pin: string }): Promise<ActionResult> {
+  const parsed = z.object({ accountId: z.uuid(), pin: z.string().trim().regex(/^[0-9]{6}$/, "The PIN is 6 digits.") }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request." };
+  try {
+    const ctx = await authorize("settings.manage");
+    if (ctx.role !== "owner" && ctx.role !== "admin") return { ok: false, error: "Only owners and admins can register a number." };
+    await registerWhatsAppNumber(createAdminClient(), { businessId: ctx.business.id, accountId: parsed.data.accountId, pin: parsed.data.pin, userId: ctx.user.id });
+    revalidatePath("/settings/whatsapp");
+    revalidatePath("/dashboard");
+    return { ok: true, message: "Number registered — WhatsApp is ready" };
+  } catch (err) {
+    return { ok: false, error: message(err, "whatsapp.register") };
   }
 }

@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { ChevronDown, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
-import { connectManualAction, disconnectAction, sendTestMessageAction } from "@/app/(app)/settings/whatsapp/actions";
+import { connectManualAction, disconnectAction, registerNumberAction, sendTestMessageAction } from "@/app/(app)/settings/whatsapp/actions";
 import { Field } from "@/components/auth/field";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -28,6 +28,53 @@ export function DisconnectButton({ accountId, number }: { accountId: string; num
     >
       Disconnect
     </ConfirmButton>
+  );
+}
+
+/** Finish Cloud API registration with the number's own two-step verification PIN. */
+export function RegisterNumberForm({ accountId }: { accountId: string }) {
+  const [pin, setPin] = useState("");
+  const [pending, start] = useTransition();
+  return (
+    <form
+      method="post"
+      autoComplete="off"
+      className="grid gap-3 rounded-lg border p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const res = await registerNumberAction({ accountId, pin });
+          if (res.ok) {
+            toast.success(res.message);
+            setPin("");
+          } else toast.error(res.error);
+        });
+      }}
+    >
+      <div>
+        <div className="text-sm font-medium">Finish registration</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Enter this number’s 6-digit two-step verification PIN. Forgot it? In WhatsApp Manager open Account tools → Phone numbers → this number → Settings → Two-step
+          verification to change it, then enter the new PIN here.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          inputMode="numeric"
+          maxLength={6}
+          placeholder="6-digit PIN"
+          aria-label="Two-step verification PIN"
+          className="w-36 font-mono tracking-widest [-webkit-text-security:disc]"
+          data-1p-ignore
+          data-lpignore="true"
+        />
+        <Button type="submit" disabled={pending || pin.length !== 6}>
+          {pending && <Loader2 className="animate-spin" />} Register number
+        </Button>
+      </div>
+    </form>
   );
 }
 

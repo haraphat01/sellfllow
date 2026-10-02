@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { AlertTriangle, CheckCircle2, MessageCircle, ShieldCheck, UserRoundCheck, Zap } from "lucide-react";
 
 import { EmbeddedSignupButton } from "@/components/whatsapp/embedded-signup-button";
-import { DisconnectButton, ManualConnectForm, TestMessageForm } from "@/components/whatsapp/account-panels";
+import { DisconnectButton, ManualConnectForm, RegisterNumberForm, TestMessageForm } from "@/components/whatsapp/account-panels";
 import { Badge } from "@/components/ui/badge";
 import { requireBusinessContext } from "@/lib/auth/session";
 import { serverEnv } from "@/lib/env/server";
@@ -66,6 +66,7 @@ export default async function WhatsAppSettingsPage() {
                     {canManage && <DisconnectButton accountId={a.id} number={a.display_phone_number ?? a.phone_number_id} />}
                   </div>
                   {a.last_error && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{a.last_error}</p>}
+                  {canManage && a.status === "error" && /registration/i.test(a.last_error ?? "") && <RegisterNumberForm accountId={a.id} />}
                   {canManage && a.status === "connected" && (
                     <div className="rounded-lg bg-muted/60 p-4">
                       <div className="mb-2 text-sm font-medium">Test the connection</div>
