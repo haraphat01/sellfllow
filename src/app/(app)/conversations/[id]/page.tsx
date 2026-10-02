@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, Phone } from "lucide-react";
+import { ArrowLeft, Bot, ExternalLink, Phone } from "lucide-react";
 
 import { AiModeControl, AssignSelect, ResolveButton } from "@/components/conversations/conversation-controls";
 import { Composer } from "@/components/conversations/composer";
@@ -35,7 +35,7 @@ async function ConversationView({ ctx, id }: { ctx: BusinessContext; id: string 
   if (!conversation) notFound();
 
   const customerRow = conversation.customers as unknown as { id: string };
-  const [thread, members, customer, activity, { data: allMembers }, { data: followUp }] = await Promise.all([
+  const [thread, members, customer, activity, { data: allMembers }, { data: followUp }, { data: agent }] = await Promise.all([
     getThread(db, ctx.business.id, id),
     listAssignableMembers(db, ctx.business.id),
     getCustomer(db, ctx.business.id, customerRow.id),
@@ -51,6 +51,7 @@ async function ConversationView({ ctx, id }: { ctx: BusinessContext; id: string 
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    db.from("ai_agents").select("enabled").eq("business_id", ctx.business.id).maybeSingle(),
   ]);
   if (!customer) notFound();
 
@@ -89,6 +90,20 @@ async function ConversationView({ ctx, id }: { ctx: BusinessContext; id: string 
             <ResolveButton conversationId={conversation.id} closed={closed} disabled={!canReply} />
           </div>
         </header>
+
+        {conversation.ai_mode === "AI_ACTIVE" && !closed && agent && !agent.enabled && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-warning/15 px-4 py-2 text-sm">
+            <Bot className="size-4 shrink-0" />
+            <span>The AI assistant is switched off for this business, so it won’t reply here.</span>
+            {ctx.can("settings.manage") ? (
+              <Link href="/settings/ai" className="font-medium underline-offset-2 hover:underline">
+                Turn it on in Settings → AI assistant
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">Ask an owner or admin to turn it on.</span>
+            )}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,var(--border)_1px,transparent_0)] [background-size:22px_22px]">
           {thread.hasMore && <p className="pt-4 text-center text-xs text-muted-foreground">Showing the latest messages</p>}
