@@ -8,10 +8,11 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20),
   NEXT_PUBLIC_APP_URL: z.url().default("http://localhost:3000"),
-  // Shown on the legal pages (/privacy, /terms, /data-deletion).
-  NEXT_PUBLIC_LEGAL_NAME: z.string().trim().min(2).default("SellFlow"),
-  NEXT_PUBLIC_SUPPORT_EMAIL: z.email().optional(),
-  NEXT_PUBLIC_COMPANY_ADDRESS: z.string().trim().min(5).optional(),
+  // Shown on the legal pages (/privacy, /terms, /data-deletion). An invalid
+  // value is treated as unset (the pages flag it) rather than crashing the app.
+  NEXT_PUBLIC_LEGAL_NAME: z.string().trim().min(2).catch("SellFlow").default("SellFlow"),
+  NEXT_PUBLIC_SUPPORT_EMAIL: z.email().optional().catch(undefined),
+  NEXT_PUBLIC_COMPANY_ADDRESS: z.string().trim().min(5).optional().catch(undefined),
 });
 
 export const publicEnv = schema.parse({

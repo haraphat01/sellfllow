@@ -9,7 +9,7 @@ import { authorize } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { embeddedSignupSchema, manualConnectSchema, testMessageSchema } from "@/lib/validation/whatsapp";
 import { exchangeSignupCode, GraphApiError } from "@/lib/whatsapp/graph";
-import { connectWhatsAppAccount, disconnectWhatsAppAccount, registerWhatsAppNumber, WhatsAppConnectionError } from "@/services/whatsapp/accounts.service";
+import { connectWhatsAppAccount, disconnectWhatsAppAccount, refreshRegistration, registerWhatsAppNumber, WhatsAppConnectionError } from "@/services/whatsapp/accounts.service";
 import { OutboundMessageError, sendTemplateToNumber } from "@/services/whatsapp/outbound.service";
 
 function message(err: unknown, action: string) {
@@ -120,5 +120,20 @@ export async function registerNumberAction(input: { accountId: string; pin: stri
     return { ok: true, message: "Number registered — WhatsApp is ready" };
   } catch (err) {
     return { ok: false, error: message(err, "whatsapp.register") };
+  }
+}
+
+/** Re-checks a "Needs attention" number with Meta and fixes SellFlow's status. */
+export async function refreshRegistrationAction(accountId: string): Promise<ActionResult> {
+  if (!z.uuid().safeParse(accountId).success) return { ok: false, error: "Invalid request." };
+  try {
+    const ctx = await authorize("settings.manage");
+    if (ctx.role !== "owner" && ctx.role !== "admin") return { ok: false, error: "Only owners and admins can do this." };
+    const res = await refreshRegistration(createAdminClient(), { businessId: ctx.business.id, accountId, userId: ctx.user.id });
+    revalidatePath("/settings/whatsapp");
+    revalidatePath("/dashboard");
+    return res.connected ? { ok: true, message: "Number is registered — WhatsApp is ready" } : { ok: false, error: res.error ?? "Meta hasn't registered this number yet." };
+  } catch (err) {
+    return { ok: false, error: message(err, "whatsapp.refresh_registration") };
   }
 }

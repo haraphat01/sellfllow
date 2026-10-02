@@ -38,7 +38,7 @@ function baseUrl() {
   return `${host}/${env.META_GRAPH_API_VERSION}`;
 }
 
-async function graphFetch<T>(path: string, init: { method?: string; token?: string; body?: unknown; query?: Record<string, string> } = {}): Promise<T> {
+async function graphFetch<T>(path: string, init: { method?: string; token?: string; body?: unknown; query?: Record<string, string>; timeoutMs?: number } = {}): Promise<T> {
   const url = new URL(`${baseUrl()}/${path.replace(/^\//, "")}`);
   Object.entries(init.query ?? {}).forEach(([k, v]) => url.searchParams.set(k, v));
 
@@ -49,7 +49,7 @@ async function graphFetch<T>(path: string, init: { method?: string; token?: stri
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(init.timeoutMs ?? TIMEOUT_MS),
     cache: "no-store",
   });
 
@@ -80,7 +80,19 @@ export type PhoneNumberInfo = {
   verified_name?: string;
   quality_rating?: string;
   code_verification_status?: string;
+  /** e.g. CONNECTED, PENDING, DISCONNECTED */
+  status?: string;
+  /** CLOUD_API once registered for the Cloud API */
+  platform_type?: string;
 };
+
+/** True when Meta reports the number as already registered and usable on the Cloud API. */
+export function isRegisteredOnCloudApi(info: Pick<PhoneNumberInfo, "status" | "platform_type">) {
+  return info.platform_type === "CLOUD_API" && info.status === "CONNECTED";
+}
+
+/** Registration can take Meta well over the default timeout. */
+const REGISTER_TIMEOUT_MS = 60_000;
 
 export type SendResult = { waMessageId: string };
 
@@ -89,7 +101,7 @@ export function whatsappClient(token: string) {
     getPhoneNumber: (phoneNumberId: string) =>
       graphFetch<PhoneNumberInfo>(phoneNumberId, {
         token,
-        query: { fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status" },
+        query: { fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,status,platform_type" },
       }),
 
     /** Webhooks for this WABA are delivered to our app. */
@@ -99,7 +111,10 @@ export function whatsappClient(token: string) {
 
     /** Registers the number for Cloud API use with a 6-digit two-step verification PIN. */
     registerPhoneNumber: (phoneNumberId: string, pin: string) =>
-      graphFetch<{ success: boolean }>(`${phoneNumberId}/register`, { method: "POST", token, body: { messaging_product: "whatsapp", pin } }),
+      graphFetch<{ success: boolean }>(`${phoneNumberId}/register`, { method: "POST", token, body: { messaging_product: "whatsapp", pin }, timeoutMs: REGISTER_TIMEOUT_MS }),
+
+    /** Sets (or replaces) the number's two-step verification PIN. Only for numbers already on the Cloud API. */
+    setTwoStepPin: (phoneNumberId: string, pin: string) => graphFetch<{ success: boolean }>(phoneNumberId, { method: "POST", token, body: { pin } }),
 
     sendText: async (phoneNumberId: string, to: string, body: string, replyTo?: string): Promise<SendResult> => {
       const res = await graphFetch<{ messages: { id: string }[] }>(`${phoneNumberId}/messages`, {

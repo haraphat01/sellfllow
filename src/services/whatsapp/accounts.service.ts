@@ -5,7 +5,7 @@ import { randomInt } from "node:crypto";
 import { logger } from "@/lib/observability/logger";
 import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
 import type { DbClient } from "@/lib/supabase/types";
-import { GraphApiError, whatsappClient, type WhatsAppClient } from "@/lib/whatsapp/graph";
+import { GraphApiError, isRegisteredOnCloudApi, whatsappClient, type PhoneNumberInfo, type WhatsAppClient } from "@/lib/whatsapp/graph";
 import { assertWithinLimit } from "@/services/billing/limits";
 
 export class WhatsAppConnectionError extends Error {
@@ -99,17 +99,7 @@ export async function connectWhatsAppAccount(
     throw new WhatsAppConnectionError("We couldn't subscribe to messages for this WhatsApp Business Account. Check the WABA ID and token permissions.");
   }
 
-  let lastError: string | null = null;
-  if (params.register) {
-    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    try {
-      await wa.registerPhoneNumber(params.phoneNumberId, pin);
-      await storeCredential(admin, params.businessId, pinLabel(params.phoneNumberId), pin);
-    } catch (err) {
-      lastError = registrationErrorMessage(err);
-      log.warn("whatsapp.connect.register_failed", { error: err instanceof Error ? err.message : String(err) });
-    }
-  }
+  const lastError = params.register ? await ensureRegistered(admin, wa, params.businessId, params.phoneNumberId, info, log) : null;
 
   const credentialId = await storeCredential(admin, params.businessId, credentialLabel(params.phoneNumberId), params.token);
 
@@ -147,6 +137,85 @@ export async function connectWhatsAppAccount(
   return account;
 }
 
+/**
+ * Makes sure the number is registered for the Cloud API. Returns null when it
+ * is, or a message for the business when it isn't.
+ *
+ *  * Already registered (e.g. a previous attempt succeeded, or the number was
+ *    registered elsewhere): nothing to do — never re-register, which would fail
+ *    with a PIN mismatch.
+ *  * Otherwise register with a new random PIN, saving the PIN *before* calling
+ *    Meta so it can never be lost. Registration can be slow: after a timeout we
+ *    ask Meta again instead of failing.
+ */
+async function ensureRegistered(admin: DbClient, wa: WhatsAppClient, businessId: string, phoneNumberId: string, info: PhoneNumberInfo, log: { warn: (m: string, d?: Record<string, unknown>) => void }) {
+  if (isRegisteredOnCloudApi(info)) return null;
+  const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  await storeCredential(admin, businessId, pinLabel(phoneNumberId), pin);
+  try {
+    await wa.registerPhoneNumber(phoneNumberId, pin);
+    return null;
+  } catch (err) {
+    log.warn("whatsapp.connect.register_failed", { error: err instanceof Error ? err.message : String(err) });
+    const now = await wa.getPhoneNumber(phoneNumberId).catch(() => null);
+    if (now && isRegisteredOnCloudApi(now)) return null;
+    return registrationErrorMessage(err);
+  }
+}
+
+/**
+ * "Check again" for a number stuck in Needs attention: asks Meta for the real
+ * state. If it's registered, marks it connected; if SellFlow doesn't know its
+ * two-step PIN (e.g. it was lost), sets a new one so future re-registration
+ * works. If it isn't registered yet, tries to register it again.
+ */
+export async function refreshRegistration(admin: DbClient, p: { businessId: string; accountId: string; userId: string }) {
+  const { wa, phoneNumberId } = await getClientForAccount(admin, p.businessId, p.accountId);
+  const log = logger.child({ business_id: p.businessId, phone_number_id: phoneNumberId });
+  let info: PhoneNumberInfo;
+  try {
+    info = await wa.getPhoneNumber(phoneNumberId);
+  } catch (err) {
+    throw new WhatsAppConnectionError(err instanceof GraphApiError && err.isAuthError ? "Meta rejected this number's access token. Disconnect and connect the number again." : "We couldn't reach Meta. Please try again.");
+  }
+
+  let lastError: string | null;
+  if (isRegisteredOnCloudApi(info)) {
+    lastError = null;
+    const { count } = await admin.from("business_credentials").select("id", { count: "exact", head: true }).eq("business_id", p.businessId).eq("provider", "whatsapp").eq("label", pinLabel(phoneNumberId));
+    if (!count) {
+      const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+      await storeCredential(admin, p.businessId, pinLabel(phoneNumberId), pin);
+      await wa.setTwoStepPin(phoneNumberId, pin).catch((err) => log.warn("whatsapp.pin_reset_failed", { error: err instanceof Error ? err.message : String(err) }));
+    }
+  } else {
+    lastError = await ensureRegistered(admin, wa, p.businessId, phoneNumberId, info, log);
+  }
+
+  const { error } = await admin
+    .from("whatsapp_accounts")
+    .update({
+      status: lastError ? "error" : "connected",
+      last_error: lastError,
+      display_phone_number: info.display_phone_number,
+      verified_name: info.verified_name ?? null,
+      quality_rating: info.quality_rating ?? null,
+      ...(lastError ? {} : { connected_at: new Date().toISOString() }),
+    })
+    .eq("business_id", p.businessId)
+    .eq("id", p.accountId);
+  if (error) throw error;
+  await admin.from("audit_logs").insert({
+    business_id: p.businessId,
+    actor_user_id: p.userId,
+    action: "whatsapp.registration_checked",
+    entity_type: "whatsapp_account",
+    entity_id: p.accountId,
+    metadata: { registered: !lastError, meta_status: info.status ?? null, platform_type: info.platform_type ?? null },
+  });
+  return { connected: !lastError, error: lastError };
+}
+
 /** Meta error 133005: the number already has a two-step verification PIN and it didn't match. */
 const PIN_MISMATCH = 133005;
 
@@ -154,9 +223,9 @@ export const REGISTRATION_PREFIX = "Registration incomplete:";
 
 function registrationErrorMessage(err: unknown) {
   if (err instanceof GraphApiError && err.code === PIN_MISMATCH) {
-    return `${REGISTRATION_PREFIX} this number already has a two-step verification PIN. Enter it below to finish registration.`;
+    return `${REGISTRATION_PREFIX} Meta says this number already has a two-step verification PIN. Click Check again — if it’s still not registered, enter the PIN.`;
   }
-  return `${REGISTRATION_PREFIX} Meta couldn't register the number (${err instanceof Error ? err.message : String(err)}). Try again below.`;
+  return `${REGISTRATION_PREFIX} Meta couldn't register the number (${err instanceof Error ? err.message : String(err)}). Click Check again.`;
 }
 
 /**

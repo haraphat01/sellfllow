@@ -66,7 +66,7 @@ export default async function WhatsAppSettingsPage() {
                     {canManage && <DisconnectButton accountId={a.id} number={a.display_phone_number ?? a.phone_number_id} />}
                   </div>
                   {a.last_error && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{a.last_error}</p>}
-                  {canManage && a.status === "error" && /registration/i.test(a.last_error ?? "") && <RegisterNumberForm accountId={a.id} />}
+                  {canManage && a.status === "error" && <RegisterNumberForm accountId={a.id} needsPin={/two-step verification PIN/i.test(a.last_error ?? "")} />}
                   {canManage && a.status === "connected" && (
                     <div className="rounded-lg bg-muted/60 p-4">
                       <div className="mb-2 text-sm font-medium">Test the connection</div>
