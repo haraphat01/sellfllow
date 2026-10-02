@@ -46,8 +46,10 @@ describe.skipIf(!run)("Subscription billing (integration)", { timeout: 90_000 },
     const { data: card } = await admin.from("business_credentials").select("ciphertext, last_four").eq("business_id", BIZ).eq("provider", "paystack").eq("label", "billing_authorization").maybeSingle();
     originalCard = card;
     await admin.from("business_credentials").delete().eq("business_id", BIZ).eq("provider", "paystack").eq("label", "billing_authorization");
-    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").single();
-    ownerId = owner!.user_id;
+    // Audit-log actor: the business owner, or any user if the E2E owner account was removed.
+    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").maybeSingle();
+    const { data: anyone } = owner ? { data: null } : await admin.from("profiles").select("id").limit(1).single();
+    ownerId = owner?.user_id ?? anyone!.id;
     const { data: starter } = await admin.from("subscription_plans").select("id").eq("code", "starter").single();
     await admin
       .from("subscriptions")

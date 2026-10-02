@@ -7,7 +7,7 @@ import { toActionError, type ActionResult } from "@/lib/actions";
 import { authorize } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { EVENTS, inngest } from "@/lib/inngest/client";
+import { dispatchPaymentSucceeded } from "@/jobs/events";
 import { advanceFulfilment, cancelOrder, updateOrderNotes } from "@/services/orders/orders.service";
 import { createPaymentLink, refreshOrderPayment, requestRefund } from "@/services/payments/payments.service";
 
@@ -82,7 +82,7 @@ export async function checkPaymentAction(orderId: string): Promise<ActionResult>
     refresh(orderId);
     if (!r) return { ok: false, error: "No payment link has been created for this order yet." };
     if (r.outcome === "paid") {
-      await inngest.send({ name: EVENTS.paymentSucceeded, id: `payment-succeeded-${orderId}`, data: { businessId: ctx.business.id, orderId } });
+      dispatchPaymentSucceeded({ businessId: ctx.business.id, orderId });
       return { ok: true, message: "Paystack confirmed the payment — order marked Paid" };
     }
     if (r.outcome === "order_not_payable") return { ok: true, message: `Payment received, but the order is ${r.orderStatus}. Fulfil or refund it.` };

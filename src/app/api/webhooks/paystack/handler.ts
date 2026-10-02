@@ -2,8 +2,7 @@ import "server-only";
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { EVENTS, inngest } from "@/lib/inngest/client";
-import { logger } from "@/lib/observability/logger";
+import { dispatchPaymentSucceeded, dispatchUnpayableOrder } from "@/jobs/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { handlePaystackWebhook } from "@/services/payments/payments.service";
 
@@ -27,17 +26,8 @@ export async function handlePaystackRequest(request: NextRequest) {
     requestId,
   });
 
-  try {
-    if (result.paid) {
-      await inngest.send({ name: EVENTS.paymentSucceeded, id: `payment-succeeded-${result.paid.orderId}`, data: result.paid });
-    }
-    if (result.unpayable) {
-      await inngest.send({ name: EVENTS.paymentForUnpayableOrder, id: `payment-unpayable-${result.unpayable.orderId}`, data: result.unpayable });
-    }
-  } catch (err) {
-    // The payment is already recorded; the notification can be re-sent by a later confirm.
-    logger.error("paystack.webhook.enqueue_failed", err, { request_id: requestId });
-  }
+  if (result.paid) dispatchPaymentSucceeded(result.paid);
+  if (result.unpayable) dispatchUnpayableOrder(result.unpayable);
 
   return NextResponse.json({ received: result.status === 200 }, { status: result.status });
 }

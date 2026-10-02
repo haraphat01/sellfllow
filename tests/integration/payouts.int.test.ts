@@ -67,8 +67,10 @@ describe.skipIf(!run)("Bank-account payouts (integration)", { timeout: 90_000 },
       if (await fetch(`${MOCK}/__tx/none`).then(() => true, () => false)) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").single();
-    ownerId = owner!.user_id;
+    // Audit-log actor: the business owner, or any user if the E2E owner account was removed.
+    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").maybeSingle();
+    const { data: anyone } = owner ? { data: null } : await admin.from("profiles").select("id").limit(1).single();
+    ownerId = owner?.user_id ?? anyone!.id;
     // Start from a clean slate: no payout account, and no legacy merchant key.
     const { data: key } = await admin.from("business_credentials").select("ciphertext, last_four").eq("business_id", BIZ).eq("provider", "paystack").eq("label", "secret").maybeSingle();
     merchantKey = key;

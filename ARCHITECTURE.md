@@ -12,7 +12,7 @@ or automates WhatsApp Web.
 | App | Next.js 16 App Router (`src/`), TypeScript, Tailwind v4, shadcn/ui, Lucide | One deployable for dashboard + API + webhooks |
 | Data | Supabase Postgres + Auth + Storage + Realtime | RLS gives tenant isolation in the database itself |
 | Tenancy | Shared schema, `business_id` on every tenant row, RLS | Scales to thousands of tenants with one schema; isolation enforced below the app |
-| Jobs | **Inngest** (served from `/api/inngest`) | Durable `step.sleep` for follow-up delays, retries, local dev server, no second deploy target |
+| Jobs | **In-process background work + Coolify scheduled tasks** (`/api/cron/*`) | SellFlow runs as one long-running server on a Coolify VPS: webhooks are answered fast and processed right after; timed work (follow-ups, sweeps, billing) runs on Coolify's scheduler; the database is the source of truth, so restarts lose nothing |
 | AI | **AI SDK + Vercel AI Gateway** behind `AIProvider` | Swap Anthropic/OpenAI/others by model string; usage/cost observability |
 | Payments | Paystack (per-business secret key, encrypted) | Local payment methods; webhooks with HMAC signatures |
 | Hosting | Vercel (Fluid Compute, Node.js runtime) + hosted Supabase | |
@@ -26,11 +26,11 @@ src/
 │   ├── (app)/               # dashboard shell: dashboard, conversations, orders, products, ...
 │   ├── onboarding/          # business creation wizard
 │   ├── admin/               # platform admin (is_platform_admin)
-│   └── api/                 # webhooks/whatsapp, webhooks/paystack, inngest, health, ...
+│   └── api/                 # webhooks/whatsapp, webhooks/paystack, cron, health, ...
 ├── components/              # UI; no business logic
 ├── lib/                     # cross-cutting: supabase clients, auth context, env, security, logging
 ├── services/                # domain logic (business, whatsapp, ai, orders, payments, ...)
-├── jobs/                    # Inngest functions (follow-ups, campaigns, analytics)
+├── jobs/                    # events.ts (in-process, after responses) + scheduled.ts (cron tasks)
 └── db/types/                # generated Database types
 supabase/
 ├── migrations/              # schema, RLS, functions (source of truth)
@@ -41,7 +41,7 @@ Rules:
 
 * **Components never talk to the database directly** except simple RLS-scoped reads in Server Components. Mutations go through server actions → services.
 * **Services take a `DbClient` argument.** The same service works with the user's RLS client (dashboard) or the service-role client (webhooks/jobs). This keeps services extractable into separate workers later.
-* **Service-role code must establish tenant context from trusted data** (`phone_number_id`, a verified Paystack reference, an Inngest event created by our own code) and filter every query by that `business_id`.
+* **Service-role code must establish tenant context from trusted data** (`phone_number_id`, a verified Paystack reference, a job dispatched by our own created by our own code) and filter every query by that `business_id`.
 
 ## Request paths
 
@@ -65,10 +65,10 @@ Meta → POST /api/webhooks/whatsapp
   1. Verify X-Hub-Signature-256 (HMAC-SHA256 of raw body with META_APP_SECRET)
   2. For each change: resolve phone_number_id → whatsapp_accounts → business_id
   3. Insert whatsapp_events(event_key = "msg:<wamid>") — unique ⇒ duplicate deliveries are no-ops
-  4. inngest.send("whatsapp/message.received", { event_id })
+  4. dispatch in-process background processing (after the response; whatsapp-sweep recovers restarts)
   5. Return 200 fast (< 1s). No AI work in the request.
 
-Inngest function (per conversation concurrency = 1):
+Background job (one at a time per customer; AI reply debounced 3s per conversation):
   load event → upsert customer (business_id, wa_id) → find/open conversation
   → insert message (unique wa_message_id) → check plan limits
   → if conversation.ai_mode = AI_ACTIVE and agent enabled: AI Orchestrator
@@ -101,11 +101,11 @@ Paystack → POST /api/webhooks/paystack
 When the AI records purchase intent, the conversation becomes `sales_outcome = interested_not_purchased`.
 
 ```
-Inngest cron (every 5 min) → schedule_follow_ups()            [database]
+Coolify scheduled task follow-ups (every 5 min) → schedule_follow_ups()            [database]
     cancels pending follow-ups that hit a stop condition
     schedules one per eligible lead: last activity + merchant delay
   → one "follow-up/due" event per due follow-up
-Inngest "follow-up-send" → processFollowUp()                   [services/automation]
+same task, for each due follow-up → processFollowUp()                   [services/automation]
     follow_up_stop_reason() again → activity since? re-time → sending hours? defer
     content from trusted data: unpaid order + payment link, else the recorded
       product (must still be in stock), else a generic check-in

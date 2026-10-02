@@ -43,7 +43,7 @@ Or run Supabase locally with `supabase start` (Docker) and use the printed URL/k
 | `npm run test:integration` | Integration tests against Supabase (see AI.md) |
 | `npm run db:verify` | Apply all migrations to a throwaway Postgres and run tenant-isolation tests |
 | `npm run db:push` | Push migrations to the linked Supabase project |
-| `npm run inngest:dev` | Inngest dev server (background jobs, e.g. WhatsApp processing) |
+| `npm run cron -- <task>` | Run a scheduled task locally (`follow-ups`, `whatsapp-sweep`, `expire-orders`, `billing`) |
 | `npm run db:types` | Regenerate `src/db/types/database.ts` from the linked project (`db:types:local` without one) |
 
 ## What needs external credentials
@@ -55,5 +55,5 @@ Or run Supabase locally with `supabase start` (Docker) and use the printed URL/k
 | WhatsApp messaging | Meta app, Tech Provider, Embedded Signup config (WHATSAPP.md) |
 | AI replies | AI Gateway key |
 | Payments | Merchant's Paystack keys; platform key for subscriptions |
-| Background jobs | Inngest (local dev server needs nothing) |
+| Background jobs | Built in (in-process + Coolify scheduled tasks); nothing extra to run locally |
 # sellfllow

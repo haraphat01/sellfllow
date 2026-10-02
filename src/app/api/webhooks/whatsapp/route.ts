@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 
 import { serverEnv } from "@/lib/env/server";
-import { EVENTS, inngest } from "@/lib/inngest/client";
+import { dispatchWhatsAppEvents } from "@/jobs/events";
 import { logger } from "@/lib/observability/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyMetaSignature } from "@/lib/whatsapp/signature";
@@ -34,7 +34,7 @@ export function GET(request: NextRequest) {
 
 /**
  * Inbound messages and statuses. Verifies the signature, stores events
- * idempotently, enqueues processing, and returns quickly. Never does AI or
+ * idempotently, processes them in the background, and returns quickly. Never does AI or
  * outbound work in the request.
  */
 export async function POST(request: NextRequest) {
@@ -74,15 +74,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const queued = await recordWebhookEvents(createAdminClient(), events, requestId);
-    if (queued.length) {
-      await inngest.send(
-        queued.map((q) => ({
-          name: EVENTS.whatsappEventReceived,
-          id: `whatsapp-event-${q.id}`, // Inngest-side dedupe for retried deliveries
-          data: { eventId: q.id, businessId: q.businessId, concurrencyKey: q.concurrencyKey },
-        })),
-      );
-    }
+    // Processed in the background after we answer Meta; stored events are
+    // picked up by the whatsapp-sweep task if the server restarts first.
+    if (queued.length) dispatchWhatsAppEvents(queued);
     log.info("whatsapp.webhook.accepted", { events: events.length, queued: queued.length });
     return NextResponse.json({ received: true });
   } catch (err) {

@@ -31,8 +31,8 @@ const schema = z.object({
   /** Direct DeepSeek API (models "deepseek/<id>"); everything else goes through AI Gateway. */
   DEEPSEEK_API_KEY: z.string().optional(),
 
-  INNGEST_EVENT_KEY: z.string().optional(),
-  INNGEST_SIGNING_KEY: z.string().optional(),
+  // Shared secret for /api/cron/* (Coolify scheduled tasks).
+  CRON_SECRET: z.string().optional(),
 
   SENTRY_DSN: z.string().optional(),
 });

@@ -2,7 +2,7 @@
 
 > Status: implemented (Phase 3) — Embedded Signup (v4), manual token connection,
 > webhook verification + signature checks, idempotent storage, background
-> processing (Inngest), outbound text/template sending, delivery statuses.
+> processing (in-process background jobs), outbound text/template sending, delivery statuses.
 > Verified end-to-end with signed test payloads (`scripts/e2e-whatsapp.mjs`);
 > a live Meta connection needs the credentials below.
 
@@ -49,8 +49,6 @@ Then use **Send test** (Meta's `hello_world` template) and reply from your phone
 
 ```bash
 npm run dev                      # app on :3000
-INNGEST_DEV=1 npm run dev        # (set INNGEST_DEV=1 in .env instead, for local job processing)
-npm run inngest:dev              # Inngest dev server on :8288 (processes webhook events)
 ngrok http 3000                  # public URL for Meta's webhook
 ```
 
@@ -86,10 +84,10 @@ Unknown `phone_number_id` ⇒ event is stored as `ignored` and nothing else happ
 ## Webhook contract
 
 * `GET /api/webhooks/whatsapp` — returns `hub.challenge` when `hub.mode=subscribe` and `hub.verify_token` matches.
-* `POST /api/webhooks/whatsapp` — verifies `X-Hub-Signature-256` over the **raw** body, records one `whatsapp_events` row per message/status with an idempotent `event_key` (`msg:<wamid>` / `status:<wamid>:<status>`), enqueues Inngest, returns 200 immediately. Meta retries non-2xx responses, so processing is asynchronous and idempotent.
-* Processing claims each event atomically (`received|failed → processing`), so it runs once even under concurrent retries; events from the same customer are processed in order (Inngest concurrency key).
+* `POST /api/webhooks/whatsapp` — verifies `X-Hub-Signature-256` over the **raw** body, records one `whatsapp_events` row per message/status with an idempotent `event_key` (`msg:<wamid>` / `status:<wamid>:<status>`), processes it in the background after responding, and returns 200 immediately. Meta retries non-2xx responses, so processing is asynchronous and idempotent.
+* Processing claims each event atomically (`received|failed → processing`), so it runs once even under concurrent retries; events from the same customer are processed in order (in-process queue per customer).
 * Status updates only move forward (`sent → delivered → read`, `failed` is terminal), since Meta can deliver them out of order.
-* A sweeper (every 10 min, Phase 8) re-queues events left `received`/`failed`, or stuck `processing`, from the last 24h.
+* The `whatsapp-sweep` scheduled task (every 5 min) re-processes events left `received`/`failed`, or stuck `processing`, from the last 24h.
 
 ## Messaging rules we respect
 

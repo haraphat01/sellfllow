@@ -14,8 +14,8 @@
     "db:push": "supabase db push",
     "db:types": "supabase gen types typescript --linked --schema public > src/db/types/database.ts",
     "db:types:local": "./scripts/db-types-local.sh",
-    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest",
-    "test:integration": "vitest run --config vitest.integration.config.mts"
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "cron": "node --env-file=.env scripts/cron.mjs"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "3.0.54",
@@ -24,7 +24,6 @@
     "ai": "^7.0.118",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "inngest": "^4.21.0",
     "lucide-react": "^1.48.0",
     "next": "16.3.6",
     "papaparse": "^5.7.0",

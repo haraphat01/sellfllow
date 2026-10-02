@@ -83,8 +83,10 @@ describe.skipIf(!run)("Paystack payments (integration)", { timeout: 90_000 }, as
     const { data: prev } = await admin.from("payout_accounts").select("*").eq("business_id", BIZ).maybeSingle();
     previousPayout = prev;
     await admin.from("payout_accounts").delete().eq("business_id", BIZ);
-    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").single();
-    ownerId = owner!.user_id;
+    // Audit-log actor: the business owner, or any user if the E2E owner account was removed.
+    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").maybeSingle();
+    const { data: anyone } = owner ? { data: null } : await admin.from("profiles").select("id").limit(1).single();
+    ownerId = owner?.user_id ?? anyone!.id;
     await payouts.connectPayoutAccount(admin, { businessId: BIZ, bankCode: "058", accountNumber: "0123456789", userId: ownerId });
     ({ customerId, conversationId } = await newConversation());
   });

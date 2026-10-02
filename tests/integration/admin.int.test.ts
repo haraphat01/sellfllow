@@ -21,8 +21,10 @@ describe.skipIf(!run)("Platform admin (integration)", { timeout: 60_000 }, async
   beforeAll(async () => {
     const { data: s } = await admin.from("subscriptions").select("*").eq("business_id", BIZ).single();
     originalSub = s!;
-    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").single();
-    adminId = owner!.user_id; // any real user id works as the audit actor here
+    // Audit-log actor: the business owner, or any user if the E2E owner account was removed.
+    const { data: owner } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).eq("role", "owner").maybeSingle();
+    const { data: anyone } = owner ? { data: null } : await admin.from("profiles").select("id").limit(1).single();
+    adminId = owner?.user_id ?? anyone!.id; // any real user id works as the audit actor here
   });
 
   afterAll(async () => {
@@ -47,8 +49,10 @@ describe.skipIf(!run)("Platform admin (integration)", { timeout: 60_000 }, async
 
   it("finds a business by name, slug, member email and id", async () => {
     const { data: b } = await admin.from("businesses").select("name, slug").eq("id", BIZ).single();
-    const { data: owner } = await admin.from("profiles").select("email").eq("id", adminId).single();
-    for (const q of [b!.name.slice(0, 5), b!.slug, owner!.email, BIZ]) {
+    // Member-email search only applies when the business still has a member.
+    const { data: member } = await admin.from("business_members").select("user_id").eq("business_id", BIZ).limit(1).maybeSingle();
+    const { data: profile } = member ? await admin.from("profiles").select("email").eq("id", member.user_id).single() : { data: null };
+    for (const q of [b!.name.slice(0, 5), b!.slug, ...(profile?.email ? [profile.email] : []), BIZ]) {
       const res = await adminSvc.searchBusinesses(admin, { q });
       expect(res.rows.map((r) => r.id), `query ${q}`).toContain(BIZ);
     }

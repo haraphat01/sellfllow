@@ -42,7 +42,7 @@ Paystack → POST /api/webhooks/paystack
   4. charge.success → GET /transaction/verify/:reference  (the event itself is never trusted)
   5. status success + amount + currency match → mark_payment_succeeded (one transaction):
        payment success · order paid · customer totals/status · conversation purchased
-  6. Inngest payment/succeeded → WhatsApp "✅ Payment received for order #N"
+  6. background job → WhatsApp "✅ Payment received for order #N"
 ```
 
 * **Never trusted:** the browser return page (`/pay/complete` only says "we're confirming"), webhook bodies, the AI, or the customer saying "I've paid". Paid status comes only from Paystack's verify API.
@@ -102,7 +102,7 @@ Merchants pay **SellFlow** with SellFlow's own Paystack account (`PAYSTACK_SECRE
 | State transitions (service role only) | `apply_billing_payment`, `mark_renewal_failed`, `advance_subscription_states`, `set_subscription_schedule` (`supabase/migrations/20260928180000_billing_engine.sql`) |
 | Webhook | `/api/webhooks/paystack/billing` (signed with `PAYSTACK_SECRET_KEY`) |
 | Return page | `/billing/complete` (verifies server-side; the query string proves nothing) |
-| Hourly job | `billing-lifecycle`: renewals → expiries → usage alerts |
+| Hourly task | `billing` (Coolify scheduled task → `/api/cron/billing`): renewals → expiries → usage alerts |
 
 ## Rules
 
