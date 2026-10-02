@@ -6,6 +6,7 @@ import { isModelAvailable, serverEnv } from "@/lib/env/server";
 import { logger } from "@/lib/observability/logger";
 import type { DbClient } from "@/lib/supabase/types";
 import { getPlan, isOverLimit, isSubscriptionUsable } from "@/services/billing/limits";
+import { isBankTransferEnabled } from "@/services/payments/bank-transfer.service";
 import { canCollectPayments } from "@/services/payments/payments.service";
 import { isWithinServiceWindow, sendConversationText } from "@/services/whatsapp/outbound.service";
 
@@ -20,9 +21,10 @@ export type RespondOutcome =
   | { outcome: "skipped"; reason: string }
   | { outcome: "dropped"; aiRequestId: string; reason: string };
 
-/** Orders are always on; payment links only when the business has connected Paystack. */
+/** Orders are always on; Paystack links when set up; bank transfer when the business enabled it. */
 async function capabilitiesFor(admin: DbClient, businessId: string): Promise<PromptCapabilities> {
-  return { orders: true, payments: await canCollectPayments(admin, businessId) };
+  const [payments, bankTransfer] = await Promise.all([canCollectPayments(admin, businessId), isBankTransferEnabled(admin, businessId)]);
+  return { orders: true, payments, bankTransfer };
 }
 
 async function loadAgentContext(admin: DbClient, businessId: string) {

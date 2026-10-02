@@ -39,6 +39,7 @@ const EVENT_TEXT: Record<string, (actor: string, data: Record<string, unknown>, 
   follow_up_sent: (_a, d) => `Automated follow-up #${String(d.sequence_number ?? 1)} sent${d.channel === "template" ? " (template)" : ""}`,
   customer_opted_out: () => "Customer replied STOP — no more automated messages",
   customer_opted_in: () => "Customer replied START — automated messages allowed again",
+  payment_claimed: (_a, d) => `Customer says they’ve paid for order #${String(d.order_number ?? "")} by bank transfer${d.with_receipt ? " (receipt attached)" : ""} — confirm it on the order page`,
 };
 
 export function Thread({

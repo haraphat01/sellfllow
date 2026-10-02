@@ -172,6 +172,15 @@ export function whatsappClient(token: string) {
       return { waMessageId: res.messages[0].id };
     },
 
+    /** Downloads a media file a customer sent (image/document). Meta's URLs need the token and expire after a few minutes. */
+    downloadMedia: async (mediaId: string): Promise<{ bytes: ArrayBuffer; mimeType: string }> => {
+      const meta = await graphFetch<{ url: string; mime_type?: string }>(mediaId, { token });
+      if (!meta.url) throw new GraphApiError("Media URL missing", 404);
+      const res = await fetch(meta.url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+      if (!res.ok) throw new GraphApiError(`Media download failed (${res.status})`, res.status);
+      return { bytes: await res.arrayBuffer(), mimeType: meta.mime_type ?? res.headers.get("content-type") ?? "application/octet-stream" };
+    },
+
     /** Templates on the WhatsApp Business Account (needs whatsapp_business_management). */
     listTemplates: async (wabaId: string): Promise<MessageTemplate[]> => {
       const res = await graphFetch<{ data: MessageTemplate[] }>(`${wabaId}/message_templates`, {

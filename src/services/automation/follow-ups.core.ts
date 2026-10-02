@@ -5,7 +5,7 @@
 import { localParts, safeTimeZone, zonedTime } from "@/lib/timezone";
 
 export type FollowUpContent =
-  | { kind: "pending_order"; orderNumber: number; total: string; paymentLink: string | null }
+  | { kind: "pending_order"; orderNumber: number; total: string; paymentLink: string | null; bankDetails?: string | null }
   | { kind: "product"; productName: string }
   | { kind: "general" };
 
@@ -23,7 +23,11 @@ const GENERAL_MESSAGE = "Hi {name} 👋 Just checking in — would you like me t
 export function renderFollowUp(c: FollowUpContent & { customerFirstName: string }, merchantMessage: string | null): string {
   const name = c.customerFirstName.trim() || "there";
   if (c.kind === "pending_order") {
-    const pay = c.paymentLink ? `You can complete payment here: ${c.paymentLink}` : "Reply here and I'll send you a payment link.";
+    const pay = c.paymentLink
+      ? `You can complete payment here: ${c.paymentLink}`
+      : c.bankDetails
+        ? `You can pay by bank transfer to ${c.bankDetails} (narration: Order ${c.orderNumber}), then send the receipt here.`
+        : "Reply here and I'll send you a payment link.";
     return `Hi ${name} 👋 Your order #${c.orderNumber} (${c.total}) is still waiting for payment. ${pay}`;
   }
   const custom = merchantMessage?.trim();

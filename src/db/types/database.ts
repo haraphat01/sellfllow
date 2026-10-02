@@ -305,6 +305,50 @@ export type Database = {
           },
         ]
       }
+      bank_transfer_settings: {
+        Row: {
+          account_name: string
+          account_number: string
+          bank_name: string
+          business_id: string
+          created_at: string
+          enabled: boolean
+          instructions: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          account_name: string
+          account_number: string
+          bank_name: string
+          business_id: string
+          created_at?: string
+          enabled?: boolean
+          instructions?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          account_name?: string
+          account_number?: string
+          bank_name?: string
+          business_id?: string
+          created_at?: string
+          enabled?: boolean
+          instructions?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transfer_settings_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: true
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_events: {
         Row: {
           amount_minor: number | null
@@ -1568,7 +1612,9 @@ export type Database = {
           authorization_url: string | null
           business_id: string
           channel: string | null
+          claimed_at: string | null
           collection_mode: string
+          confirmed_by: string | null
           created_at: string
           currency: string
           failure_reason: string | null
@@ -1576,6 +1622,7 @@ export type Database = {
           order_id: string
           paid_at: string | null
           platform_fee_minor: number
+          proof_message_id: string | null
           provider: string
           provider_response: Json
           provider_transaction_id: string | null
@@ -1583,6 +1630,8 @@ export type Database = {
           refund_requested_at: string | null
           refunded_amount_minor: number | null
           refunded_at: string | null
+          rejected_at: string | null
+          rejection_note: string | null
           status: Database["public"]["Enums"]["payment_status"]
           subaccount_code: string | null
           updated_at: string
@@ -1594,7 +1643,9 @@ export type Database = {
           authorization_url?: string | null
           business_id: string
           channel?: string | null
+          claimed_at?: string | null
           collection_mode?: string
+          confirmed_by?: string | null
           created_at?: string
           currency: string
           failure_reason?: string | null
@@ -1602,6 +1653,7 @@ export type Database = {
           order_id: string
           paid_at?: string | null
           platform_fee_minor?: number
+          proof_message_id?: string | null
           provider?: string
           provider_response?: Json
           provider_transaction_id?: string | null
@@ -1609,6 +1661,8 @@ export type Database = {
           refund_requested_at?: string | null
           refunded_amount_minor?: number | null
           refunded_at?: string | null
+          rejected_at?: string | null
+          rejection_note?: string | null
           status?: Database["public"]["Enums"]["payment_status"]
           subaccount_code?: string | null
           updated_at?: string
@@ -1620,7 +1674,9 @@ export type Database = {
           authorization_url?: string | null
           business_id?: string
           channel?: string | null
+          claimed_at?: string | null
           collection_mode?: string
+          confirmed_by?: string | null
           created_at?: string
           currency?: string
           failure_reason?: string | null
@@ -1628,6 +1684,7 @@ export type Database = {
           order_id?: string
           paid_at?: string | null
           platform_fee_minor?: number
+          proof_message_id?: string | null
           provider?: string
           provider_response?: Json
           provider_transaction_id?: string | null
@@ -1635,6 +1692,8 @@ export type Database = {
           refund_requested_at?: string | null
           refunded_amount_minor?: number | null
           refunded_at?: string | null
+          rejected_at?: string | null
+          rejection_note?: string | null
           status?: Database["public"]["Enums"]["payment_status"]
           subaccount_code?: string | null
           updated_at?: string
@@ -1653,6 +1712,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_proof_message_id_fkey"
+            columns: ["proof_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
         ]
@@ -2313,6 +2379,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      confirm_bank_transfer: {
+        Args: { p_business_id: string; p_payment_id: string; p_user_id: string }
+        Returns: Json
+      }
       create_business: {
         Args: {
           p_country?: string
@@ -2409,6 +2479,15 @@ export type Database = {
           p_subject_id?: string
         }
         Returns: number
+      }
+      reject_bank_transfer: {
+        Args: {
+          p_business_id: string
+          p_note: string
+          p_payment_id: string
+          p_user_id: string
+        }
+        Returns: boolean
       }
       schedule_follow_ups: { Args: { p_limit?: number }; Returns: Json }
       search_products: {

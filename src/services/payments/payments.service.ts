@@ -161,6 +161,8 @@ export async function confirmPayment(admin: DbClient, p: { businessId: string; p
     .single();
   if (!payment) throw new PaymentError("Payment not found.");
   if (payment.status === "success") return { outcome: "already_paid", orderId: payment.order_id };
+  // Never confirm a bank transfer through Paystack (or anything automatic): a person must.
+  if (payment.collection_mode === "bank_transfer") throw new PaymentError("Bank transfers are confirmed by the team on the order page.");
 
   const tx = await (await clientForPayment(admin, payment)).verify(payment.reference);
   if (tx.reference !== payment.reference) throw new PaymentError("Paystack returned a different transaction.");
@@ -196,13 +198,14 @@ export async function confirmPayment(admin: DbClient, p: { businessId: string; p
   return { outcome: "not_paid", status: tx.status };
 }
 
-/** Confirms the latest open payment of an order (used by the dashboard and the AI). */
+/** Confirms the latest open Paystack payment of an order with Paystack (dashboard and AI). Bank transfers are confirmed by a person only. */
 export async function refreshOrderPayment(admin: DbClient, p: { businessId: string; orderId: string }) {
   const { data: pay } = await admin
     .from("payments")
     .select("id")
     .eq("business_id", p.businessId)
     .eq("order_id", p.orderId)
+    .neq("collection_mode", "bank_transfer")
     .in("status", ["initialized", "pending", "success"])
     .order("created_at", { ascending: false })
     .limit(1)
@@ -316,8 +319,9 @@ export async function requestRefund(admin: DbClient, p: { businessId: string; or
     .eq("business_id", p.businessId)
     .eq("order_id", p.orderId)
     .eq("status", "success")
+    .neq("collection_mode", "bank_transfer")
     .maybeSingle();
-  if (!pay) throw new PaymentError("This order has no successful payment to refund.");
+  if (!pay) throw new PaymentError("This order has no Paystack payment to refund. Bank transfers are refunded from your own bank account.");
   if (pay.refund_requested_at) throw new PaymentError("A refund has already been requested for this order.");
   try {
     await (await clientForPayment(admin, pay)).refund(pay.reference);

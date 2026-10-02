@@ -4,6 +4,7 @@ import { logger } from "@/lib/observability/logger";
 import { formatMoney } from "@/lib/money";
 import type { DbClient } from "@/lib/supabase/types";
 import { getPlan, isOverLimit } from "@/services/billing/limits";
+import { getBankTransferSettings } from "@/services/payments/bank-transfer.service";
 import { isWithinServiceWindow, OutboundMessageError, sendConversationText, sendTemplateToNumber } from "@/services/whatsapp/outbound.service";
 
 import { nextSendTime, renderFollowUp, type FollowUpContent } from "./follow-ups.core";
@@ -93,6 +94,7 @@ export async function processFollowUp(admin: DbClient, followUpId: string, now =
 
   const content = await loadContent(admin, fu.business_id, fu.conversation_id, conv.state as Record<string, unknown>, business.currency);
   if (content.kind === "unavailable") return end("skipped", "out_of_stock");
+  if (content.kind === "awaiting_confirmation") return end("skipped", "payment_claimed");
 
   const customer = conv.customers as unknown as { wa_id: string; name: string | null; profile_name: string | null };
   const firstName = (customer.name ?? customer.profile_name ?? "").trim().split(/\s+/)[0] ?? "";
@@ -157,10 +159,10 @@ async function loadContent(
   conversationId: string,
   state: Record<string, unknown>,
   currency: string,
-): Promise<(FollowUpContent & { orderId?: string }) | { kind: "unavailable" }> {
+): Promise<(FollowUpContent & { orderId?: string }) | { kind: "unavailable" } | { kind: "awaiting_confirmation" }> {
   const { data: order } = await admin
     .from("orders")
-    .select("id, order_number, total_minor, currency, payments(authorization_url, status, created_at)")
+    .select("id, order_number, total_minor, currency, payments(authorization_url, status, created_at, collection_mode)")
     .eq("business_id", businessId)
     .eq("conversation_id", conversationId)
     .eq("status", "pending_payment")
@@ -168,7 +170,10 @@ async function loadContent(
     .limit(1)
     .maybeSingle();
   if (order) {
-    const payments = (order.payments ?? []) as { authorization_url: string | null; status: string; created_at: string }[];
+    const payments = (order.payments ?? []) as { authorization_url: string | null; status: string; created_at: string; collection_mode: string }[];
+    // The customer already says they've paid by transfer: the team is checking — don't nag.
+    if (payments.some((p) => p.collection_mode === "bank_transfer" && p.status === "pending")) return { kind: "awaiting_confirmation" };
+    const transfer = payments.some((p) => p.collection_mode === "bank_transfer" && p.status === "initialized") ? await getBankTransferSettings(admin, businessId) : null;
     const link = payments
       .filter((p) => p.authorization_url && (p.status === "initialized" || p.status === "pending"))
       .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]?.authorization_url;
@@ -178,6 +183,7 @@ async function loadContent(
       orderNumber: order.order_number,
       total: formatMoney(order.total_minor, order.currency ?? currency),
       paymentLink: link ?? null,
+      bankDetails: !link && transfer?.enabled ? `${transfer.bank_name} ${transfer.account_number} (${transfer.account_name})` : null,
     };
   }
 

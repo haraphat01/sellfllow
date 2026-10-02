@@ -7,8 +7,9 @@ import { toActionError, type ActionResult } from "@/lib/actions";
 import { authorize } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { dispatchPaymentSucceeded } from "@/jobs/events";
+import { dispatchPaymentSucceeded, dispatchUnpayableOrder } from "@/jobs/events";
 import { advanceFulfilment, cancelOrder, updateOrderNotes } from "@/services/orders/orders.service";
+import { confirmBankTransfer, rejectBankTransfer } from "@/services/payments/bank-transfer.service";
 import { createPaymentLink, refreshOrderPayment, requestRefund } from "@/services/payments/payments.service";
 
 const id = z.uuid();
@@ -103,5 +104,42 @@ export async function refundOrderAction(orderId: string): Promise<ActionResult> 
     return { ok: true, message: "Refund requested — the order updates when Paystack completes it" };
   } catch (err) {
     return { ok: false, error: toActionError(err, { action: "order.refund", order_id: orderId }) };
+  }
+}
+
+/**
+ * Bank transfer: a person confirms the money arrived in the business's account.
+ * This is the ONLY way a bank-transfer order becomes paid.
+ */
+export async function confirmBankTransferAction(orderId: string): Promise<ActionResult> {
+  if (!id.safeParse(orderId).success) return { ok: false, error: "Invalid request." };
+  try {
+    const ctx = await authorize("orders.manage");
+    const res = await confirmBankTransfer(createAdminClient(), { businessId: ctx.business.id, orderId, userId: ctx.user.id });
+    refresh(orderId);
+    if (res.outcome === "paid") {
+      dispatchPaymentSucceeded({ businessId: ctx.business.id, orderId });
+      return { ok: true, message: "Payment confirmed — order marked Paid and the customer is notified" };
+    }
+    if (res.outcome === "order_not_payable") {
+      dispatchUnpayableOrder({ businessId: ctx.business.id, orderId, orderNumber: res.order_number ?? 0 });
+      return { ok: true, message: "Payment recorded, but this order was already cancelled. Fulfil or refund it." };
+    }
+    return { ok: true, message: "Already paid" };
+  } catch (err) {
+    return { ok: false, error: toActionError(err, { action: "order.bank_transfer.confirm", order_id: orderId }) };
+  }
+}
+
+/** Bank transfer: the money hasn't arrived — clear the claim and ask the customer to check. */
+export async function rejectBankTransferAction(orderId: string, note: string): Promise<ActionResult> {
+  if (!id.safeParse(orderId).success) return { ok: false, error: "Invalid request." };
+  try {
+    const ctx = await authorize("orders.manage");
+    const res = await rejectBankTransfer(createAdminClient(), { businessId: ctx.business.id, orderId, userId: ctx.user.id, note: note.trim().slice(0, 300) || null });
+    refresh(orderId);
+    return { ok: true, message: `Marked as not received. The customer was asked to check their transfer for order #${res.orderNumber}.` };
+  } catch (err) {
+    return { ok: false, error: toActionError(err, { action: "order.bank_transfer.reject", order_id: orderId }) };
   }
 }

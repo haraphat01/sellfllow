@@ -35,7 +35,8 @@ export type PromptPolicies = {
   has_delivery_zones: boolean;
 };
 
-export type PromptCapabilities = { orders: boolean; payments: boolean };
+/** payments = Paystack links (confirmed automatically); bankTransfer = direct transfer to the business (confirmed by a person). */
+export type PromptCapabilities = { orders: boolean; payments: boolean; bankTransfer?: boolean };
 
 const TONE: Record<string, string> = {
   friendly: "warm, friendly and helpful, like a great shop assistant",
@@ -48,6 +49,22 @@ const TONE: Record<string, string> = {
 function quote(s: string | null | undefined, max = 1500) {
   if (!s) return "(not provided)";
   return s.slice(0, max).replace(/</g, "‹").replace(/>/g, "›");
+}
+
+const BANK_TRANSFER_RULES =
+  "- Bank transfer: call get_bank_transfer_details and send the bank name, account number, account name, the exact amount and the narration exactly as returned (never type or change account details). When the customer says they've paid or sends a receipt, call record_payment_claim. A person on the team confirms bank transfers: never say a transfer was received or that the order is paid unless get_payment_status returns paid: true — say the team will confirm shortly. Don't try to judge receipts yourself.";
+
+function paymentRules(c: PromptCapabilities) {
+  const paystack =
+    "- Paystack: call create_payment_link and send the link exactly as returned (never type or change a URL). Payment is confirmed automatically — if the customer says they've paid, call get_payment_status; never say a payment succeeded unless it returns paid: true.";
+  if (c.payments && c.bankTransfer) {
+    return `- After create_order, ask how they'd like to pay: a secure Paystack link (card, transfer or USSD — confirmed automatically) or a direct bank transfer to the business's account (confirmed by the team). Then:
+${paystack}
+${BANK_TRANSFER_RULES}`;
+  }
+  if (c.payments) return `- After create_order, pay by Paystack.\n${paystack}`;
+  if (c.bankTransfer) return `- After create_order, payment is by bank transfer.\n${BANK_TRANSFER_RULES}`;
+  return "- After create_order, give the order number and total and say the team will send payment details shortly. Never invent bank details or payment instructions, and never say an order is paid.";
 }
 
 export function buildSystemPrompt(p: {
@@ -64,11 +81,7 @@ export function buildSystemPrompt(p: {
   const orderRules = p.capabilities.orders
     ? `- To sell: find the product (and variant), quantity, the customer's full name, delivery address and delivery zone (from get_business_policy). Record them with update_conversation_state. Then call calculate_order_total and show the customer the exact breakdown: each item, delivery fee, total.
 - Only call create_order AFTER the customer's latest message explicitly confirms that breakdown ("yes", "go ahead", …). If they change anything, re-quote first.
-${
-  p.capabilities.payments
-    ? "- After create_order, call create_payment_link and send the link exactly as returned (never type or change a URL). Payment is confirmed automatically — if the customer says they've paid, call get_payment_status; never say a payment succeeded unless it returns paid: true."
-    : "- After create_order, give the order number and total and say the team will send payment details shortly. Never invent bank details or payment instructions, and never say an order is paid."
-}
+${paymentRules(p.capabilities)}
 - Customers can check an order with get_order, or cancel an unpaid one with cancel_order.`
     : `- You cannot create orders or payment links yet. When the customer is ready to buy, collect product, variant, quantity, name and delivery address (use update_conversation_state), then call handoff_to_human with reason "ready_to_order" and tell them a team member will complete the order shortly.`;
 

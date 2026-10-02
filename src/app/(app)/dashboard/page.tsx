@@ -12,6 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getDashboardSummary, getSetupChecklist } from "@/services/business/business.service";
 import { derived, percent } from "@/services/analytics/analytics.core";
 import { getAnalytics } from "@/services/analytics/analytics.service";
+import { isBankTransferEnabled } from "@/services/payments/bank-transfer.service";
 import { canCollectPayments } from "@/services/payments/payments.service";
 
 export const metadata: Metadata = { title: "Overview" };
@@ -22,7 +23,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   const canAnalytics = ctx.can("analytics.view");
   const [summary, setup, analytics] = await Promise.all([
     getDashboardSummary(db, ctx.business.id),
-    getSetupChecklist(db, ctx.business.id, await canCollectPayments(createAdminClient(), ctx.business.id)),
+    getSetupChecklist(db, ctx.business.id, (await canCollectPayments(createAdminClient(), ctx.business.id)) || (await isBankTransferEnabled(createAdminClient(), ctx.business.id))),
     canAnalytics ? getAnalytics(db, ctx.business.id, ctx.business.timezone, "30d", { compare: false }) : Promise.resolve(null),
   ]);
   const report = analytics?.current;

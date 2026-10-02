@@ -10,6 +10,7 @@ import type { DbClient } from "@/lib/supabase/types";
 import type { Enums, Json } from "@/db/types/database";
 import { getPlan, isOverLimit } from "@/services/billing/limits";
 import { cancelOrder, createOrder, OrderError, quoteOrder } from "@/services/orders/orders.service";
+import { bankTransferDetails, getBankTransferSettings, latestReceiptMessage, narrationFor, recordPaymentClaim } from "@/services/payments/bank-transfer.service";
 import { createPaymentLink, PaymentError, refreshOrderPayment } from "@/services/payments/payments.service";
 
 import { extractAmountsMinor } from "./grounding";
@@ -34,7 +35,7 @@ export type ToolContext = {
   turnStartedAt: Date;
   /** Recent messages the customer actually received from us (used to verify they saw a quote). */
   assistantTexts: string[];
-  capabilities: { orders: boolean; payments: boolean };
+  capabilities: { orders: boolean; payments: boolean; bankTransfer?: boolean };
   /** Mutable per-turn record used for grounding checks and state. */
   turn: {
     outputs: unknown[];
@@ -451,7 +452,7 @@ function createOrderTools(ctx: ToolContext): ToolSet {
           ctx,
           { order_id: order.id, order_number: order.order_number, purchase_stage: "payment_pending" },
           ["pending_quote"],
-          { purchase_stage: "payment_pending", ...(ctx.capabilities.payments ? {} : { needs_attention: true }) },
+          { purchase_stage: "payment_pending", ...(ctx.capabilities.payments || ctx.capabilities.bankTransfer ? {} : { needs_attention: true }) },
         );
         await db.from("conversation_events").insert({
           business_id: ctx.businessId,
@@ -493,9 +494,14 @@ function createOrderTools(ctx: ToolContext): ToolSet {
           total_minor: order.total_minor,
           total: fmt(order.total_minor),
           status: order.status,
-          next: ctx.capabilities.payments
-            ? "Call create_payment_link and send the link."
-            : "Tell the customer their order number and total, and that the team will send payment details shortly. Do not invent payment instructions.",
+          next:
+            ctx.capabilities.payments && ctx.capabilities.bankTransfer
+              ? "Ask how they'd like to pay: Paystack link or direct bank transfer. Then call create_payment_link or get_bank_transfer_details."
+              : ctx.capabilities.payments
+                ? "Call create_payment_link and send the link."
+                : ctx.capabilities.bankTransfer
+                  ? "Call get_bank_transfer_details and send the account details, amount and narration."
+                  : "Tell the customer their order number and total, and that the team will send payment details shortly. Do not invent payment instructions.",
         };
       }),
   });
@@ -557,7 +563,7 @@ function createOrderTools(ctx: ToolContext): ToolSet {
       }),
   });
 
-  if (!ctx.capabilities.payments) return { calculate_order_total, create_order, get_order, cancel_order };
+  if (!ctx.capabilities.payments && !ctx.capabilities.bankTransfer) return { calculate_order_total, create_order, get_order, cancel_order };
 
   async function findOrder(orderNumber?: number) {
     const q = db.from("orders").select("id, order_number, status, total_minor, currency").eq("business_id", ctx.businessId).eq("customer_id", ctx.customerId);
@@ -587,7 +593,8 @@ function createOrderTools(ctx: ToolContext): ToolSet {
   });
 
   const get_payment_status = tool({
-    description: "Check with Paystack whether THIS customer's order has been paid. Use whenever the customer says they've paid. Never say payment succeeded unless this returns paid: true.",
+    description:
+      "Check whether THIS customer's order has been paid. Use whenever the customer says they've paid. Paystack payments are checked with Paystack; bank transfers show whether the team has confirmed them. Never say payment succeeded unless this returns paid: true.",
     inputSchema: z.object({ order_number: z.number().int().positive().optional() }),
     execute: (input) =>
       record(ctx, "get_payment_status", input, async () => {
@@ -596,6 +603,32 @@ function createOrderTools(ctx: ToolContext): ToolSet {
         if (order.status !== "pending_payment" || ctx.dryRun) {
           return { found: true, order_number: order.order_number, paid: ["paid", "processing", "shipped", "delivered"].includes(order.status), status: order.status, total_minor: order.total_minor };
         }
+        // Bank transfer: report what the team has done; never confirm anything here.
+        const { data: transfer } = await db
+          .from("payments")
+          .select("status, claimed_at, rejected_at")
+          .eq("business_id", ctx.businessId)
+          .eq("order_id", order.id)
+          .eq("collection_mode", "bank_transfer")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (transfer && (transfer.status === "pending" || (transfer.status === "initialized" && !ctx.capabilities.payments))) {
+          const claimed = transfer.status === "pending";
+          return {
+            found: true,
+            order_number: order.order_number,
+            paid: false,
+            status: claimed ? "bank transfer awaiting confirmation by the team" : transfer.rejected_at ? "team couldn't find the transfer yet" : "awaiting bank transfer",
+            total_minor: order.total_minor,
+            note: claimed
+              ? "The team is checking their bank. Tell the customer it will be confirmed shortly — do not say it's paid."
+              : transfer.rejected_at
+                ? "The team checked and hasn't received it yet. Ask the customer to check the account details and amount, and send the receipt again (then call record_payment_claim)."
+                : "No payment yet. If they've transferred, call record_payment_claim; otherwise resend the details with get_bank_transfer_details.",
+          };
+        }
+        if (!ctx.capabilities.payments) return { found: true, order_number: order.order_number, paid: false, status: "awaiting payment", total_minor: order.total_minor };
         const r = await refreshOrderPayment(db, { businessId: ctx.businessId, orderId: order.id });
         const paid = r?.outcome === "paid" || r?.outcome === "already_paid";
         return {
@@ -609,7 +642,77 @@ function createOrderTools(ctx: ToolContext): ToolSet {
       }),
   });
 
-  return { calculate_order_total, create_order, get_order, cancel_order, create_payment_link, get_payment_status };
+  const get_bank_transfer_details = tool({
+    description: "Get the business's bank account details, the exact amount and the narration for THIS customer's unpaid order (defaults to the order just created). Send them exactly as returned.",
+    inputSchema: z.object({ order_number: z.number().int().positive().optional() }),
+    execute: (input) =>
+      record(ctx, "get_bank_transfer_details", input, async () => {
+        const order = await findOrder(input.order_number);
+        if (!order) return { ok: false, note: "No such order for this customer." };
+        if (order.status !== "pending_payment") return { ok: false, status: order.status, note: `Order #${order.order_number} is ${order.status.replaceAll("_", " ")} — no payment needed.` };
+        if (ctx.dryRun) {
+          const settings = await getBankTransferSettings(db, ctx.businessId);
+          return { ok: true, order_number: order.order_number, bank_name: settings?.bank_name, account_number: settings?.account_number, account_name: settings?.account_name, amount_minor: order.total_minor, amount: money(order.total_minor, order.currency), narration: narrationFor(order.order_number), note: "Playground: nothing was recorded." };
+        }
+        try {
+          const d = await bankTransferDetails(db, { businessId: ctx.businessId, orderId: order.id });
+          return {
+            ok: true,
+            order_number: d.orderNumber,
+            bank_name: d.bankName,
+            account_number: d.accountNumber,
+            account_name: d.accountName,
+            amount_minor: d.amountMinor,
+            amount: money(d.amountMinor, d.currency),
+            narration: d.narration,
+            instructions: d.instructions,
+            next: "Send these details exactly. Ask them to use the narration and to send the transfer receipt here once they've paid.",
+          };
+        } catch (err) {
+          if (err instanceof PaymentError) return { ok: false, problem: err.message, next: "Apologise and call handoff_to_human so the team can help with payment." };
+          throw err;
+        }
+      }),
+  });
+
+  const record_payment_claim = tool({
+    description:
+      "Record that THIS customer says they've paid by bank transfer (and attach the receipt they sent, if any). Alerts the team to check their bank. This does NOT mark the order paid — only the team can.",
+    inputSchema: z.object({ order_number: z.number().int().positive().optional() }),
+    execute: (input) =>
+      record(ctx, "record_payment_claim", input, async () => {
+        const order = await findOrder(input.order_number);
+        if (!order) return { ok: false, note: "No such order for this customer." };
+        if (order.status !== "pending_payment") return { ok: false, status: order.status, note: `Order #${order.order_number} is ${order.status.replaceAll("_", " ")}.` };
+        if (ctx.dryRun) return { ok: true, order_number: order.order_number, note: "Playground: nothing was recorded." };
+        const { data: created } = await db.from("orders").select("created_at").eq("id", order.id).single();
+        const receipt = await latestReceiptMessage(db, { businessId: ctx.businessId, conversationId: ctx.conversationId, since: created!.created_at });
+        try {
+          await recordPaymentClaim(db, { businessId: ctx.businessId, orderId: order.id, conversationId: ctx.conversationId, proofMessageId: receipt });
+        } catch (err) {
+          if (err instanceof PaymentError) return { ok: false, problem: err.message, next: "Call handoff_to_human so the team can check the payment." };
+          throw err;
+        }
+        return {
+          ok: true,
+          order_number: order.order_number,
+          receipt_attached: Boolean(receipt),
+          next: receipt
+            ? "Thank them: their receipt has been passed to the team, who will confirm as soon as they've checked. Do NOT say it's paid."
+            : "Thank them and ask them to send a screenshot of the transfer receipt here to speed things up. Say the team will confirm shortly. Do NOT say it's paid.",
+        };
+      }),
+  });
+
+  return {
+    calculate_order_total,
+    create_order,
+    get_order,
+    cancel_order,
+    get_payment_status,
+    ...(ctx.capabilities.payments ? { create_payment_link } : {}),
+    ...(ctx.capabilities.bankTransfer ? { get_bank_transfer_details, record_payment_claim } : {}),
+  };
 }
 
 /** Stops the AI for this conversation and flags it for the team. */

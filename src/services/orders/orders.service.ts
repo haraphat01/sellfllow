@@ -151,7 +151,7 @@ export async function getOrder(db: DbClient, businessId: string, orderId: string
   if (!order) return null;
   const [items, payments, history] = await Promise.all([
     db.from("order_items").select("*").eq("business_id", businessId).eq("order_id", orderId).order("created_at"),
-    db.from("payments").select("id, reference, amount_minor, currency, status, channel, paid_at, created_at, failure_reason, refund_requested_at").eq("business_id", businessId).eq("order_id", orderId).order("created_at", { ascending: false }),
+    db.from("payments").select("id, reference, amount_minor, currency, status, channel, paid_at, created_at, failure_reason, refund_requested_at, collection_mode, claimed_at, proof_message_id, confirmed_by, rejected_at, rejection_note").eq("business_id", businessId).eq("order_id", orderId).order("created_at", { ascending: false }),
     db.from("audit_logs").select("action, actor_type, actor_user_id, metadata, created_at").eq("business_id", businessId).eq("entity_id", orderId).order("created_at"),
   ]);
   return { order, items: items.data ?? [], payments: payments.data ?? [], history: history.data ?? [] };

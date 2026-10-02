@@ -23,6 +23,12 @@ describe("renderFollowUp", () => {
     expect(renderFollowUp({ kind: "general", customerFirstName: "Ada" }, "Hi {name}, still thinking about it?")).toBe("Hi Ada, still thinking about it?");
   });
 
+  it("reminds about an unpaid bank-transfer order with the account details", () => {
+    expect(
+      renderFollowUp({ kind: "pending_order", orderNumber: 1042, total: "₦7,000", paymentLink: null, bankDetails: "GTBank 0123456789 (PARFAIT STOP)", customerFirstName: "Ade" }, null),
+    ).toBe("Hi Ade 👋 Your order #1042 (₦7,000) is still waiting for payment. You can pay by bank transfer to GTBank 0123456789 (PARFAIT STOP) (narration: Order 1042), then send the receipt here.");
+  });
+
   it("reminds about an unpaid order with its payment link", () => {
     expect(
       renderFollowUp({ kind: "pending_order", orderNumber: 1033, total: "₦49,000", paymentLink: "https://checkout.paystack.com/x", customerFirstName: "Ngozi" }, "ignored {product}"),

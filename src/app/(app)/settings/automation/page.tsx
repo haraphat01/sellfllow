@@ -39,6 +39,7 @@ const REASON: Record<string, string> = {
   send_failed: "WhatsApp rejected the message",
   not_connected: "WhatsApp not connected",
   usage_limit: "Monthly message limit reached",
+  payment_claimed: "Customer says they paid — awaiting your confirmation",
 };
 
 const when = (iso: string | null) =>

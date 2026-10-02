@@ -16,6 +16,7 @@ export function PaymentActions({
   canManage,
   canRefund,
   refundRequested,
+  bankTransfer = false,
 }: {
   orderId: string;
   status: string;
@@ -23,13 +24,14 @@ export function PaymentActions({
   canManage: boolean;
   canRefund: boolean;
   refundRequested: boolean;
+  bankTransfer?: boolean;
 }) {
   const [link, setLink] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const awaiting = status === "pending_payment";
 
   if (!paystackConnected) {
-    return awaiting ? <p className="px-6 pb-4 text-sm text-muted-foreground">Add a payout bank account in Settings → Payments to send payment links.</p> : null;
+    return awaiting && !bankTransfer ? <p className="px-6 pb-4 text-sm text-muted-foreground">Set up payments in Settings → Payments to collect payment for orders.</p> : null;
   }
 
   return (

@@ -90,6 +90,35 @@ Code: `src/services/payments/payouts.service.ts`, `payouts.core.ts`; migration `
 
 ---
 
+# Manual bank transfer (paid straight to the business)
+
+Businesses can let customers transfer straight into their own bank account. The money arrives instantly and there's no fee. A transfer **cannot be verified automatically**, so **only a person on the business's team can confirm it**. Paystack payments stay fully automatic (signed webhook plus verification).
+
+**Setup:** Settings → Payments → **Bank transfer to your account**. Owner only: bank, 10-digit account number, account name, optional instructions. It can run alone or alongside Paystack; with both, the AI asks the customer which they prefer.
+
+```
+create_order → get_bank_transfer_details
+   → payments row: collection_mode = provider = 'bank_transfer', status 'initialized'
+   → AI sends bank, account number, account name, exact amount, narration "Order <n>"
+Customer: "I've paid" (+ receipt image/PDF)
+   → record_payment_claim → status 'pending', claimed_at, proof_message_id (latest image/document)
+   → conversation needs attention + "Check payment for order #n" notification
+   → AI: "the team will confirm shortly" (never "paid"; get_payment_status says "awaiting confirmation")
+Team (orders.manage), order page:
+   Confirm payment received → confirm_bank_transfer(user) → mark_payment_succeeded → order Paid
+                              → WhatsApp "✅ Payment received…", audit log with who confirmed
+   Not received             → reject_bank_transfer → claim cleared; customer asked to check and resend
+```
+
+* **Enforced by the database:** a bank-transfer payment can't become `success` without `confirmed_by` (a CHECK constraint). `confirm_bank_transfer` / `reject_bank_transfer` are service-role only, and the app checks `orders.manage` first. The Paystack verify path refuses bank transfers. Paystack refunds don't apply; refund from your own account.
+* **Receipts:** shown on the order page via `/api/media/<messageId>`, streamed from WhatsApp with the business's token to its own team only (images and PDFs). The page warns that receipts can be faked: confirm only after seeing the money in the bank.
+* **Expiry and follow-ups:** an order with a pending claim isn't auto-expired and gets no payment reminder. Unclaimed bank-transfer orders get reminders that include the account details.
+* **Team can confirm without a claim:** "Confirm payment received" works even if the customer never told the AI, e.g. they paid and phoned.
+
+Code: `src/services/payments/bank-transfer.service.ts`, AI tools in `src/services/ai/tools.ts`, migration `20261002120000_bank_transfer.sql`, tests `supabase/tests/bank_transfer.sql`, `tests/integration/bank-transfer.int.test.ts`.
+
+---
+
 # SellFlow subscription billing (Phase 10)
 
 Merchants pay **SellFlow** with SellFlow's own Paystack account (`PAYSTACK_SECRET_KEY`). Merchants' customer payments use the same account but are split to their subaccounts; subscription invoices use `sfb-` references and are never split.

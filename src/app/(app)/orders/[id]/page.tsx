@@ -6,6 +6,7 @@ import { ArrowLeft, Bot, MessagesSquare } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { OrderActions, OrderNotes } from "@/components/orders/order-actions";
 import { OrderStatusBadge } from "@/components/orders/order-status";
+import { BankTransferCard } from "@/components/orders/bank-transfer-card";
 import { PaymentActions } from "@/components/orders/payment-actions";
 import { Button } from "@/components/ui/button";
 import { requireBusinessContext } from "@/lib/auth/session";
@@ -13,6 +14,7 @@ import { formatMoney } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOrder } from "@/services/orders/orders.service";
+import { getBankTransferSettings, narrationFor } from "@/services/payments/bank-transfer.service";
 import { canCollectPayments } from "@/services/payments/payments.service";
 
 export const metadata: Metadata = { title: "Order" };
@@ -36,7 +38,16 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const delivery = (order.delivery_address ?? {}) as { address?: string; zone?: string | null; eta?: string | null };
   const canManage = ctx.can("orders.manage");
   const paystackConnected = await canCollectPayments(createAdminClient(), ctx.business.id);
-  const successPayment = payments.find((p) => p.status === "success");
+  const successPayment = payments.find((p) => p.status === "success" && p.collection_mode !== "bank_transfer");
+  const transferSettings = await getBankTransferSettings(await createClient(), ctx.business.id);
+  const openTransfer = payments.find((p) => p.collection_mode === "bank_transfer" && (p.status === "initialized" || p.status === "pending"));
+  const showTransferCard = order.status === "pending_payment" && (Boolean(openTransfer) || Boolean(transferSettings?.enabled));
+  const confirmerIds = payments.map((p) => p.confirmed_by).filter((v): v is string => Boolean(v));
+  const { data: confirmers } = confirmerIds.length ? await (await createClient()).from("profiles").select("id, full_name, email").in("id", confirmerIds) : { data: [] };
+  const confirmerName = (uid: string | null) => {
+    const p = (confirmers ?? []).find((c) => c.id === uid);
+    return p ? (p.full_name ?? p.email) : "your team";
+  };
   const m = (minor: number) => formatMoney(minor, order.currency);
 
   return (
@@ -100,10 +111,23 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
           <section className="rounded-xl border bg-card">
             <h2 className="border-b px-6 py-4 font-semibold">Payment</h2>
             <div className="pt-4">
+              {showTransferCard && (
+                <BankTransferCard
+                  orderId={order.id}
+                  amount={m(order.total_minor)}
+                  narration={narrationFor(order.order_number)}
+                  account={transferSettings ? `${transferSettings.bank_name} ${transferSettings.account_number}` : null}
+                  claimedAt={openTransfer?.status === "pending" ? openTransfer.claimed_at : null}
+                  receiptUrl={openTransfer?.status === "pending" && openTransfer.proof_message_id ? `/api/media/${openTransfer.proof_message_id}` : null}
+                  rejectionNote={openTransfer?.rejected_at ? (openTransfer.rejection_note ?? "no note") : null}
+                  canManage={canManage}
+                />
+              )}
               <PaymentActions
                 orderId={order.id}
                 status={order.status}
                 paystackConnected={paystackConnected}
+                bankTransfer={Boolean(transferSettings?.enabled)}
                 canManage={canManage}
                 canRefund={canManage && Boolean(successPayment) && order.status !== "refunded" && (ctx.role === "owner" || ctx.role === "admin")}
                 refundRequested={Boolean(successPayment?.refund_requested_at)}
@@ -111,14 +135,18 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             </div>
             {payments.length === 0 ? (
               <p className="px-6 py-4 text-sm text-muted-foreground">
-                {order.paid_at ? `Paid ${dt(order.paid_at)}.` : "No payment yet. This order is marked Paid only when the payment provider confirms it."}
+                {order.paid_at ? `Paid ${dt(order.paid_at)}.` : "No payment yet. Paystack payments are confirmed automatically; bank transfers are confirmed by your team."}
               </p>
             ) : (
               <ul className="divide-y text-sm">
                 {payments.map((p) => (
                   <li key={p.id} className="flex items-center justify-between px-6 py-3">
                     <span>
-                      <span className="capitalize">{p.status}</span> <span className="text-xs text-muted-foreground">· {p.reference}</span>
+                      <span className="capitalize">{p.collection_mode === "bank_transfer" && p.status === "pending" ? "Awaiting confirmation" : p.status}</span>{" "}
+                      <span className="text-xs text-muted-foreground">
+                        · {p.collection_mode === "bank_transfer" ? "Bank transfer" : "Paystack"}
+                        {p.collection_mode === "bank_transfer" && p.status === "success" ? ` · confirmed by ${confirmerName(p.confirmed_by)}` : ""} · {p.reference}
+                      </span>
                     </span>
                     <span className="tabular">{formatMoney(p.amount_minor, p.currency)}</span>
                   </li>
