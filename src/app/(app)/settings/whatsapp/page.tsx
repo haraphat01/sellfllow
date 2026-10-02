@@ -71,7 +71,7 @@ export default async function WhatsAppSettingsPage() {
                     <div className="rounded-lg bg-muted/60 p-4">
                       <div className="mb-2 text-sm font-medium">Test the connection</div>
                       <p className="mb-3 text-sm text-muted-foreground">
-                        We’ll send Meta’s pre-approved <code>hello_world</code> template. Reply from your phone and the message will appear in Conversations.
+                        If this number messaged you in the last 24 hours we send a normal message; otherwise one of your approved templates. Reply from your phone and it appears in Conversations.
                       </p>
                       <TestMessageForm accountId={a.id} />
                     </div>

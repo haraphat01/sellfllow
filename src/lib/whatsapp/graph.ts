@@ -96,6 +96,27 @@ const REGISTER_TIMEOUT_MS = 60_000;
 
 export type SendResult = { waMessageId: string };
 
+export type MessageTemplate = {
+  name: string;
+  language: string;
+  status: string;
+  category?: string;
+  components?: { type: string; format?: string; text?: string; buttons?: { type: string; url?: string; text?: string }[] }[];
+};
+
+/**
+ * A template can be sent with no parameters when no component has a
+ * placeholder ({{1}}) and the header (if any) is text.
+ */
+export function templateNeedsNoParameters(t: MessageTemplate) {
+  return (t.components ?? []).every((c) => {
+    if (c.type === "HEADER" && c.format && c.format !== "TEXT") return false;
+    if (c.text && /\{\{\s*[^}]+\s*\}\}/.test(c.text)) return false;
+    if (c.type === "BUTTONS" && (c.buttons ?? []).some((b) => (b.url && /\{\{/.test(b.url)) || b.type === "COPY_CODE" || b.type === "OTP")) return false;
+    return true;
+  });
+}
+
 export function whatsappClient(token: string) {
   return {
     getPhoneNumber: (phoneNumberId: string) =>
@@ -149,6 +170,15 @@ export function whatsappClient(token: string) {
         },
       });
       return { waMessageId: res.messages[0].id };
+    },
+
+    /** Templates on the WhatsApp Business Account (needs whatsapp_business_management). */
+    listTemplates: async (wabaId: string): Promise<MessageTemplate[]> => {
+      const res = await graphFetch<{ data: MessageTemplate[] }>(`${wabaId}/message_templates`, {
+        token,
+        query: { fields: "name,language,status,category,components", limit: "200" },
+      });
+      return res.data ?? [];
     },
 
     markRead: (phoneNumberId: string, waMessageId: string) =>

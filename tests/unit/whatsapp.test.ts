@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { embeddedSignupSchema, manualConnectSchema, waIdSchema } from "@/lib/validation/whatsapp";
 import { signMetaPayload, verifyMetaSignature } from "@/lib/whatsapp/signature";
+import { templateNeedsNoParameters } from "@/lib/whatsapp/graph";
 import { extractEvents, nextMessageStatus } from "@/lib/whatsapp/webhook";
 import { isWithinServiceWindow } from "@/services/whatsapp/outbound.service";
 
@@ -112,5 +113,18 @@ describe("whatsapp input validation", () => {
   it("requires numeric Meta ids", () => {
     expect(embeddedSignupSchema.safeParse({ code: "x".repeat(20), wabaId: "123456", phoneNumberId: "../../me" }).success).toBe(false);
     expect(manualConnectSchema.safeParse({ wabaId: "123456", phoneNumberId: "654321", accessToken: "short" }).success).toBe(false);
+  });
+});
+
+describe("templateNeedsNoParameters", () => {
+  const t = (components: unknown[]) => ({ name: "x", language: "en", status: "APPROVED", components }) as Parameters<typeof templateNeedsNoParameters>[0];
+  it("accepts plain-text templates", () => {
+    expect(templateNeedsNoParameters(t([{ type: "BODY", text: "Hello! Thanks for contacting us." }]))).toBe(true);
+    expect(templateNeedsNoParameters(t([{ type: "HEADER", format: "TEXT", text: "Hi" }, { type: "BODY", text: "Welcome" }, { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Yes" }] }]))).toBe(true);
+  });
+  it("rejects templates that need variables or media", () => {
+    expect(templateNeedsNoParameters(t([{ type: "BODY", text: "Hi {{1}}, your order is ready" }]))).toBe(false);
+    expect(templateNeedsNoParameters(t([{ type: "HEADER", format: "IMAGE" }, { type: "BODY", text: "Sale!" }]))).toBe(false);
+    expect(templateNeedsNoParameters(t([{ type: "BODY", text: "Pay now" }, { type: "BUTTONS", buttons: [{ type: "URL", url: "https://x.com/{{1}}" }] }]))).toBe(false);
   });
 });

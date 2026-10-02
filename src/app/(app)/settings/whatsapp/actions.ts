@@ -10,7 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { embeddedSignupSchema, manualConnectSchema, testMessageSchema } from "@/lib/validation/whatsapp";
 import { exchangeSignupCode, GraphApiError } from "@/lib/whatsapp/graph";
 import { connectWhatsAppAccount, disconnectWhatsAppAccount, refreshRegistration, registerWhatsAppNumber, WhatsAppConnectionError } from "@/services/whatsapp/accounts.service";
-import { OutboundMessageError, sendTemplateToNumber } from "@/services/whatsapp/outbound.service";
+import { OutboundMessageError, sendTestMessage } from "@/services/whatsapp/outbound.service";
 
 function message(err: unknown, action: string) {
   if (err instanceof WhatsAppConnectionError || err instanceof OutboundMessageError) return err.message;
@@ -87,21 +87,20 @@ export async function disconnectAction(accountId: string): Promise<ActionResult>
   }
 }
 
-/** Sends Meta's pre-approved `hello_world` template — works outside the 24h window. */
+/** Sends a test message: plain text inside the 24h window, otherwise an approved template from the account. */
 export async function sendTestMessageAction(input: { accountId: string; to: string }): Promise<ActionResult> {
   const parsed = testMessageSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid number." };
   try {
     const ctx = await authorize("settings.manage");
-    await sendTemplateToNumber(createAdminClient(), {
-      businessId: ctx.business.id,
-      accountId: parsed.data.accountId,
-      toWaId: parsed.data.to,
-      template: { name: "hello_world", language: "en_US" },
-      sender: "staff",
-      senderUserId: ctx.user.id,
-    });
-    return { ok: true, message: "Test message sent. Reply to it from your phone to see it arrive." };
+    const res = await sendTestMessage(createAdminClient(), { businessId: ctx.business.id, accountId: parsed.data.accountId, toWaId: parsed.data.to, userId: ctx.user.id });
+    return {
+      ok: true,
+      message:
+        res.kind === "text"
+          ? "Test message sent. Check WhatsApp on your phone."
+          : `Test sent using your approved “${res.name}” template. Reply from your phone to see it arrive in Conversations.`,
+    };
   } catch (err) {
     return { ok: false, error: message(err, "whatsapp.test") };
   }

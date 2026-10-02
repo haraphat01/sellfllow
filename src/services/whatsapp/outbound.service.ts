@@ -2,7 +2,7 @@ import "server-only";
 
 import { logger } from "@/lib/observability/logger";
 import type { DbClient } from "@/lib/supabase/types";
-import { GraphApiError } from "@/lib/whatsapp/graph";
+import { GraphApiError, templateNeedsNoParameters } from "@/lib/whatsapp/graph";
 
 import { getClientForAccount } from "./accounts.service";
 import { ensureOpenConversation, preview, upsertCustomer } from "./conversations.repo";
@@ -152,4 +152,63 @@ async function deliver(
       reason,
     );
   }
+}
+
+/**
+ * "Send test" from Settings → WhatsApp. If the recipient messaged this number
+ * in the last 24 hours, a plain text message is allowed; otherwise WhatsApp
+ * requires an approved template. Real WhatsApp Business accounts don't have
+ * Meta's sample `hello_world`, so we use whichever approved template on the
+ * account can be sent without parameters.
+ */
+export async function sendTestMessage(admin: DbClient, p: { businessId: string; accountId: string; toWaId: string; userId: string }) {
+  const { data: customer } = await admin.from("customers").select("id").eq("business_id", p.businessId).eq("wa_id", p.toWaId).maybeSingle();
+  if (customer) {
+    const { data: conv } = await admin
+      .from("conversations")
+      .select("id, last_customer_message_at")
+      .eq("business_id", p.businessId)
+      .eq("customer_id", customer.id)
+      .eq("whatsapp_account_id", p.accountId)
+      .eq("status", "open")
+      .maybeSingle();
+    if (conv && isWithinServiceWindow(conv.last_customer_message_at)) {
+      await sendConversationText(admin, {
+        businessId: p.businessId,
+        conversationId: conv.id,
+        body: "✅ SellFlow test message: this WhatsApp number is connected and working.",
+        sender: "staff",
+        senderUserId: p.userId,
+      });
+      return { kind: "text" as const };
+    }
+  }
+
+  const { data: account } = await admin.from("whatsapp_accounts").select("waba_id, display_phone_number").eq("business_id", p.businessId).eq("id", p.accountId).maybeSingle();
+  if (!account) throw new OutboundMessageError("WhatsApp number not found.", "not_found");
+  const { wa } = await getClientForAccount(admin, p.businessId, p.accountId);
+  let templates;
+  try {
+    templates = await wa.listTemplates(account.waba_id);
+  } catch (err) {
+    logger.warn("whatsapp.test.templates_failed", { business_id: p.businessId, error: err instanceof Error ? err.message : String(err) });
+    throw new OutboundMessageError("We couldn't read this account's message templates from Meta. Please try again.", "send_failed");
+  }
+  const approved = templates.filter((t) => t.status === "APPROVED");
+  const pick = approved.find((t) => t.name === "hello_world") ?? approved.find(templateNeedsNoParameters);
+  if (!pick) {
+    throw new OutboundMessageError(
+      `This WhatsApp account has no approved message template SellFlow can send as a test. Send any message (e.g. "hi") from your phone to ${account.display_phone_number ?? "this number"}, then click Send test again — SellFlow will reply with a normal message.`,
+      "send_failed",
+    );
+  }
+  await sendTemplateToNumber(admin, {
+    businessId: p.businessId,
+    accountId: p.accountId,
+    toWaId: p.toWaId,
+    template: { name: pick.name, language: pick.language },
+    sender: "staff",
+    senderUserId: p.userId,
+  });
+  return { kind: "template" as const, name: pick.name };
 }
