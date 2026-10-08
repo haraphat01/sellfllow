@@ -69,6 +69,12 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("handoff_to_human with reason \"ready_to_order\"");
   });
 
+  it("puts the current profile above the AI's own earlier messages (e.g. after a rename)", () => {
+    const s = buildSystemPrompt(base);
+    expect(s).toContain("If your own earlier messages in this conversation say something different");
+    expect(s.indexOf("they are outdated")).toBeLessThan(s.indexOf("# Business profile"));
+  });
+
   it("tells the AI to keep helping once the team has been notified", () => {
     expect(buildSystemPrompt(base)).not.toContain("already been asked to join");
     const s = buildSystemPrompt({ ...base, teamNotified: true });
