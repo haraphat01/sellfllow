@@ -66,7 +66,7 @@ export async function respondToConversation(
 
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, status, ai_mode, state, last_customer_message_at, whatsapp_account_id, customers!inner(id, name, profile_name, total_orders, opted_out_at)")
+    .select("id, status, ai_mode, needs_attention, state, last_customer_message_at, whatsapp_account_id, customers!inner(id, name, profile_name, total_orders, opted_out_at)")
     .eq("business_id", p.businessId)
     .eq("id", p.conversationId)
     .maybeSingle();
@@ -100,12 +100,12 @@ export async function respondToConversation(
   // Plan checks before spending tokens.
   const plan = await getPlan(admin, p.businessId);
   if (!plan || !isSubscriptionUsable(plan.status)) {
-    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "subscription", summary: "The AI is off because the subscription isn't active.", aiRequestId });
+    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "subscription", summary: "The AI is off because the subscription isn't active.", aiRequestId, stopAi: true });
     return { outcome: "handoff", aiRequestId, reason: "subscription inactive" };
   }
   // Monthly message allowance (AI replies count as messages).
   if (await isOverLimit(admin, p.businessId, plan, "messages", now)) {
-    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Monthly message limit reached — please reply manually or upgrade.", aiRequestId });
+    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Monthly message limit reached — please reply manually or upgrade.", aiRequestId, stopAi: true });
     alog.warn("ai.message_limit_reached");
     return { outcome: "handoff", aiRequestId, reason: "message limit reached" };
   }
@@ -115,7 +115,7 @@ export async function respondToConversation(
     const { data: me } = await admin.from("customers").select("created_at").eq("id", customer.id).single();
     const { count: before } = await admin.from("customers").select("id", { count: "exact", head: true }).eq("business_id", p.businessId).lt("created_at", me!.created_at);
     if ((before ?? 0) >= customerLimit) {
-      await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Customer limit reached on your plan — the AI doesn't reply to new customers. Please reply manually or upgrade.", aiRequestId });
+      await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Customer limit reached on your plan — the AI doesn't reply to new customers. Please reply manually or upgrade.", aiRequestId, stopAi: true });
       return { outcome: "handoff", aiRequestId, reason: "customer limit reached" };
     }
   }
@@ -126,7 +126,7 @@ export async function respondToConversation(
   });
   if (quotaError) throw quotaError;
   if (!allowed) {
-    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Monthly AI conversation limit reached — please reply manually or upgrade.", aiRequestId });
+    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "plan_limit", summary: "Monthly AI conversation limit reached — please reply manually or upgrade.", aiRequestId, stopAi: true });
     alog.warn("ai.quota_exceeded");
     return { outcome: "handoff", aiRequestId, reason: "plan limit reached" };
   }
@@ -154,6 +154,7 @@ export async function respondToConversation(
     state: turn.state,
     customer: { name: customer.name ?? customer.profile_name, is_returning: customer.total_orders > 0 },
     capabilities,
+    teamNotified: conv.needs_attention,
     now,
   });
   const messages = buildTranscript(history as never);

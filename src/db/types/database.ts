@@ -120,6 +120,7 @@ export type Database = {
       }
       ai_settings: {
         Row: {
+          ai_resume_after_minutes: number
           attribution_window_hours: number
           business_hours: Json
           business_id: string
@@ -144,6 +145,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_resume_after_minutes?: number
           attribution_window_hours?: number
           business_hours?: Json
           business_id: string
@@ -168,6 +170,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_resume_after_minutes?: number
           attribution_window_hours?: number
           business_hours?: Json
           business_id?: string

@@ -75,7 +75,7 @@ If all retries fail ⇒ onFailure hands the conversation to a human.
 | `get_business_policy` | Delivery zones & exact fees, returns, payment, hours, discounts |
 | `get_customer` | This customer's name, saved address, recent orders |
 | `update_conversation_state` | Structured state: stage, product, variant, quantity, name, delivery details |
-| `handoff_to_human` | Stops the AI, flags the conversation, notifies the team |
+| `handoff_to_human` | Flags the conversation and notifies the team; the AI stays on and keeps helping |
 | `calculate_order_total` | Prices items + delivery zone from the database (`quote_order`) and stores the quote on the conversation |
 | `create_order` | Turns the stored quote into an order (`create_order`: stock reserved atomically) |
 | `get_order` / `cancel_order` | This customer's orders only; cancel unpaid ones |
@@ -138,6 +138,17 @@ Code: `src/services/knowledge/faqs.service.ts`, `src/components/knowledge/faq-ma
   discounted price is also caught by grounding.
 * **Human in control:** takeover mid-generation drops the AI reply; human mode,
   pause, closed conversations and opt-outs are respected.
+* **Handoff keeps the AI on:** a handoff flags the conversation (`needs_attention`)
+  and notifies the team, but `ai_mode` stays `AI_ACTIVE`; the prompt then tells the
+  AI the team was notified, so it keeps helping without handing off again. Only
+  when the AI can't run (subscription, plan limits, repeated errors) does the
+  handoff switch the conversation to `HUMAN_ACTIVE`.
+* **People jump in, the AI comes back:** a staff reply takes over (`HUMAN_ACTIVE`)
+  and clears `needs_attention`. If the customer then waits
+  `ai_settings.ai_resume_after_minutes` (default 15, 0 = never; Settings → AI) with
+  no reply from the team, `whatsapp-sweep` hands the conversation back to the AI
+  (`ai_resumed` event, actor `system`) and it answers. Paused conversations never
+  resume. Code: `src/services/conversations/auto-resume.service.ts`.
 * **Handoff line:** "I don't have enough information to confirm that. Let me
   connect you with a member of the team."
 

@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { DbClient } from "@/lib/supabase/types";
 import { dueFollowUps, processFollowUp, scheduleFollowUps } from "@/services/automation/follow-ups.service";
 import { advanceSubscriptionStates, processRenewals, sendUsageAlerts } from "@/services/billing/billing.service";
+import { findConversationsToResume, resumeAiAfterWait } from "@/services/conversations/auto-resume.service";
 import { findEventsToRetry } from "@/services/whatsapp/inbound.service";
 
 import { processEvent, replyNow } from "./events";
@@ -17,7 +18,7 @@ import { processEvent, replyNow } from "./events";
 export const SCHEDULED_TASKS = {
   /** Every 5 minutes: detect quiet leads, schedule follow-ups, send the due ones. */
   "follow-ups": { every: "*/5 * * * *", run: runFollowUps },
-  /** Every 5 minutes: re-process WhatsApp events and AI replies that a restart or error interrupted. */
+  /** Every 5 minutes: re-process WhatsApp events and AI replies that a restart or error interrupted, and hand waiting customers back to the AI. */
   "whatsapp-sweep": { every: "*/5 * * * *", run: runWhatsAppSweep },
   /** Hourly: cancel unpaid orders older than 48h so their stock returns. */
   "expire-orders": { every: "15 * * * *", run: runExpireOrders },
@@ -97,7 +98,24 @@ async function runWhatsAppSweep(admin: DbClient) {
       if (res && "outcome" in res && res.outcome === "replied") answered++;
     }
   }
-  return { events_found: events.length, reprocessed, unanswered_found: waiting.length, answered };
+  const resumed = await resumeWaitingConversations(admin);
+  return { events_found: events.length, reprocessed, unanswered_found: waiting.length, answered, ...resumed };
+}
+
+/** A person took over but hasn't replied within the business's limit: the AI answers the waiting customer. */
+async function resumeWaitingConversations(admin: DbClient) {
+  const due = await findConversationsToResume(admin);
+  let resumed = 0;
+  for (const c of due) {
+    try {
+      if (!(await resumeAiAfterWait(admin, c))) continue;
+      resumed++;
+      await replyNow(c.business_id, c.id);
+    } catch (err) {
+      logger.error("ai.auto_resume_failed", err, { business_id: c.business_id, conversation_id: c.id });
+    }
+  }
+  return { waiting_for_team: due.length, ai_resumed: resumed };
 }
 
 async function runExpireOrders(admin: DbClient) {

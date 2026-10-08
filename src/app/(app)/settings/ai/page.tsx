@@ -66,6 +66,7 @@ export default async function AiSettingsPage() {
               max_discount_percent: Number(settings.max_discount_percent ?? 0),
               escalation_rules: settings.escalation_rules ?? "",
               payment_rules: settings.payment_rules ?? "",
+              ai_resume_after_minutes: settings.ai_resume_after_minutes,
             }}
           />
         </section>

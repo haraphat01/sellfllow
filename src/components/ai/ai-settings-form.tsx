@@ -29,7 +29,18 @@ export type AiSettingsDefaults = {
   max_discount_percent: number;
   escalation_rules: string;
   payment_rules: string;
+  ai_resume_after_minutes: number;
 };
+
+const RESUME_OPTIONS = [
+  { value: 5, label: "5 minutes" },
+  { value: 10, label: "10 minutes" },
+  { value: 15, label: "15 minutes" },
+  { value: 30, label: "30 minutes" },
+  { value: 60, label: "1 hour" },
+  { value: 120, label: "2 hours" },
+  { value: 0, label: "Never — wait for the team" },
+];
 
 function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
@@ -172,8 +183,28 @@ export function AiSettingsForm({
           name="escalation_rules"
           defaultValue={defaults.escalation_rules}
           placeholder="Custom orders, bulk orders over 10 items, complaints about a delivered order."
-          hint="The AI always hands over when it's unsure, the customer asks for a person, or there's a complaint or refund."
+          hint="The AI always hands over when it's unsure, the customer asks for a person, or there's a complaint or refund. It notifies your team and keeps helping meanwhile."
         />
+      </Section>
+
+      <Section
+        title="When your team jumps in"
+        description="Replying to a customer takes the conversation over from the AI. If nobody on your team answers in time, the AI picks it back up so customers aren't left waiting."
+      >
+        <div className="grid gap-2 sm:max-w-xs">
+          <Label htmlFor="f-ai_resume_after_minutes">Hand back to the AI if the customer waits</Label>
+          <NativeSelect id="f-ai_resume_after_minutes" name="ai_resume_after_minutes" defaultValue={String(defaults.ai_resume_after_minutes)}>
+            {RESUME_OPTIONS.some((o) => o.value === defaults.ai_resume_after_minutes) ? null : (
+              <option value={defaults.ai_resume_after_minutes}>{defaults.ai_resume_after_minutes} minutes</option>
+            )}
+            {RESUME_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">To stop the AI in one conversation for good, choose Paused there instead.</p>
+        </div>
       </Section>
 
       <div className="flex justify-end border-t pt-6">

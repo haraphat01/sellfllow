@@ -49,6 +49,8 @@ export const aiSettingsSchema = z.object({
   max_discount_percent: z.coerce.number().min(0).max(100),
   escalation_rules: text(1000),
   payment_rules: text(1000),
+  /** Minutes a customer can wait for the team before the AI picks the conversation back up; 0 = never. */
+  ai_resume_after_minutes: z.coerce.number().int().min(0).max(1440),
 });
 
 export type AiSettingsInput = z.infer<typeof aiSettingsSchema>;
@@ -76,5 +78,6 @@ export function aiSettingsFromForm(form: FormData) {
     max_discount_percent: s("max_discount_percent") || 0,
     escalation_rules: s("escalation_rules"),
     payment_rules: s("payment_rules"),
+    ai_resume_after_minutes: s("ai_resume_after_minutes") || 0,
   });
 }

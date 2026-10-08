@@ -293,7 +293,7 @@ export function createSalesTools(ctx: ToolContext): ToolSet {
       record(ctx, "handoff_to_human", input, async () => {
         ctx.turn.handoff = { reason: input.reason, summary: input.summary };
         if (!ctx.dryRun) await applyHandoff(ctx.admin, { businessId: ctx.businessId, conversationId: ctx.conversationId, reason: input.reason, summary: input.summary, aiRequestId: ctx.aiRequestId });
-        return { ok: true, note: "The team has been notified. Tell the customer someone will reply shortly. Do not promise a time." };
+        return { ok: true, note: "The team has been notified. Tell the customer someone will reply shortly. Do not promise a time. Keep helping with anything else you can answer from tools." };
       }),
   });
 
@@ -739,11 +739,18 @@ function createOrderTools(ctx: ToolContext): ToolSet {
   };
 }
 
-/** Stops the AI for this conversation and flags it for the team. */
-export async function applyHandoff(admin: DbClient, p: { businessId: string; conversationId: string; reason: string; summary: string; aiRequestId?: string }) {
+/**
+ * Flags the conversation for the team. The AI stays on — it keeps helping and a
+ * person can jump in at any time (replying takes over). `stopAi` is for when the
+ * AI can't run at all (subscription, plan limits, repeated errors).
+ */
+export async function applyHandoff(
+  admin: DbClient,
+  p: { businessId: string; conversationId: string; reason: string; summary: string; aiRequestId?: string; stopAi?: boolean },
+) {
   await admin
     .from("conversations")
-    .update({ ai_mode: "HUMAN_ACTIVE", needs_attention: true, purchase_stage: "human_handoff" })
+    .update({ ...(p.stopAi ? { ai_mode: "HUMAN_ACTIVE" as const } : {}), needs_attention: true, purchase_stage: "human_handoff" })
     .eq("business_id", p.businessId)
     .eq("id", p.conversationId);
   await admin.from("conversation_events").insert({

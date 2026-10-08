@@ -43,6 +43,8 @@ export async function sendReplyAction(conversationId: string, body: string): Pro
       sender: "staff",
       senderUserId: ctx.user.id,
     });
+    // The team has answered: if the AI picks the conversation back up later, it shouldn't say the team was only "notified".
+    await db.from("conversations").update({ needs_attention: false }).eq("business_id", ctx.business.id).eq("id", conversationId).eq("needs_attention", true);
     refresh(conversationId);
     return { ok: true };
   } catch (err) {

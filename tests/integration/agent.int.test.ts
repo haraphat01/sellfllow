@@ -108,7 +108,8 @@ describe.skipIf(!run)("AI agent turn (integration)", { timeout: 60_000 }, async 
     const out = await outbound(id);
     expect(out.map((m) => m.body)).toEqual([HANDOFF_LINE]);
     const { data: conv } = await admin.from("conversations").select("ai_mode, needs_attention, purchase_stage").eq("id", id).single();
-    expect(conv).toMatchObject({ ai_mode: "HUMAN_ACTIVE", needs_attention: true, purchase_stage: "human_handoff" });
+    // The AI stays on (a person can jump in); the team is flagged.
+    expect(conv).toMatchObject({ ai_mode: "AI_ACTIVE", needs_attention: true, purchase_stage: "human_handoff" });
     const { data: guard } = await admin.from("ai_actions").select("status").eq("conversation_id", id).eq("tool_name", "guardrail.price_grounding").single();
     expect(guard?.status).toBe("denied");
   });
@@ -154,7 +155,7 @@ describe.skipIf(!run)("AI agent turn (integration)", { timeout: 60_000 }, async 
     expect(res).toMatchObject({ outcome: "replied", handoff: true });
 
     const { data: conv } = await admin.from("conversations").select("ai_mode, needs_attention, sales_outcome, state, customers(name)").eq("id", id).single();
-    expect(conv).toMatchObject({ ai_mode: "HUMAN_ACTIVE", needs_attention: true, sales_outcome: "interested_not_purchased" });
+    expect(conv).toMatchObject({ ai_mode: "AI_ACTIVE", needs_attention: true, sales_outcome: "interested_not_purchased" });
     expect(conv?.state).toMatchObject({ product_name: "Black Leather Bag", quantity: 1, delivery_location: "Yaba", customer_name: "Ngozi" });
     expect(conv?.customers).toMatchObject({ name: "Ngozi" });
     const { data: ev } = await admin.from("conversation_events").select("type, actor_type, data").eq("conversation_id", id).eq("type", "handoff_requested").single();

@@ -53,6 +53,7 @@ export async function updateAiSettingsAction(_: FormState, form: FormData): Prom
           max_discount_percent: v.max_discount_percent,
           escalation_rules: v.escalation_rules,
           payment_rules: v.payment_rules,
+          ai_resume_after_minutes: v.ai_resume_after_minutes,
         })
         .eq("business_id", ctx.business.id)
         .select("id"),

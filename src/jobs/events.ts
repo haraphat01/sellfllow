@@ -60,7 +60,7 @@ export function replyNow(businessId: string, conversationId: string) {
       return await withRetries(() => respondToConversation(admin, { businessId, conversationId }), { attempts: 3, baseDelayMs: 2_000, name: "ai-respond" });
     } catch (err) {
       logger.error("ai.respond.failed", err, { business_id: businessId, conversation_id: conversationId });
-      await applyHandoff(admin, { businessId, conversationId, reason: "ai_error", summary: "The AI couldn't reply to this customer (technical error). Please take over." });
+      await applyHandoff(admin, { businessId, conversationId, reason: "ai_error", summary: "The AI couldn't reply to this customer (technical error). Please take over.", stopAi: true });
       return null;
     }
   });

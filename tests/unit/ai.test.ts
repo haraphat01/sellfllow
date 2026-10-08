@@ -69,6 +69,13 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("handoff_to_human with reason \"ready_to_order\"");
   });
 
+  it("tells the AI to keep helping once the team has been notified", () => {
+    expect(buildSystemPrompt(base)).not.toContain("already been asked to join");
+    const s = buildSystemPrompt({ ...base, teamNotified: true });
+    expect(s).toContain("The team has already been asked to join this conversation");
+    expect(s).toContain("don't call handoff_to_human again for the same issue");
+  });
+
   it("switches to order tools when orders are enabled", () => {
     const s = buildSystemPrompt({ ...base, capabilities: { orders: true, payments: false } });
     expect(s).toContain("Only call create_order AFTER the customer's latest message explicitly confirms");
