@@ -1,8 +1,9 @@
 /**
  * "Never invent prices" enforcement. Every money amount in an AI reply must be
  * an amount SellFlow itself produced during this turn (tool results, business
- * delivery fees) — or the sum of such amounts, or a quantity multiple.
- * Replies that fail are not sent; the conversation is handed to a human.
+ * delivery fees, the customer's own recent orders) — or the sum of such amounts,
+ * or a quantity multiple. A failing reply isn't sent: the AI gets one retry with
+ * the problem pointed out, then the conversation is handed to a human.
  */
 
 // Symbols / ISO codes — case-sensitive with word boundaries, so ordinary words
@@ -45,7 +46,8 @@ export function checkPriceGrounding(reply: string, grounded: Set<number>): Groun
   if (!amounts.length) return { ok: true };
 
   const base = [...grounded].filter((n) => n > 0);
-  const allowed = new Set(base);
+  // ₦0 is fine when a tool returned it (e.g. free pickup); it just isn't multiplied or summed.
+  const allowed = new Set(grounded);
   // Quantity multiples (2 × ₦45,000) and pairwise sums (item + delivery).
   for (const a of base) for (let q = 2; q <= 10; q++) allowed.add(a * q);
   for (const a of base) for (const b of base) allowed.add(a + b);

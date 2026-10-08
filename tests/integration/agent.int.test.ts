@@ -110,8 +110,36 @@ describe.skipIf(!run)("AI agent turn (integration)", { timeout: 60_000 }, async 
     const { data: conv } = await admin.from("conversations").select("ai_mode, needs_attention, purchase_stage").eq("id", id).single();
     // The AI stays on (a person can jump in); the team is flagged.
     expect(conv).toMatchObject({ ai_mode: "AI_ACTIVE", needs_attention: true, purchase_stage: "human_handoff" });
-    const { data: guard } = await admin.from("ai_actions").select("status").eq("conversation_id", id).eq("tool_name", "guardrail.price_grounding").single();
-    expect(guard?.status).toBe("denied");
+    // Denied twice: the first draft (retried) and the retry itself.
+    const { data: guard } = await admin.from("ai_actions").select("status, output").eq("conversation_id", id).eq("tool_name", "guardrail.price_grounding").order("created_at");
+    expect(guard?.map((g) => [g.status, (g.output as { retried: boolean }).retried])).toEqual([
+      ["denied", true],
+      ["denied", false],
+    ]);
+  });
+
+  it("retries once when a price wasn't looked up, and sends the corrected reply", async () => {
+    const id = await fixture("How much is the black bag?");
+    const provider = providerFor([
+      { text: "The black bag is ₦38,000." },
+      { tool: "search_products", input: { query: "black bag" } },
+      { text: "The Black Leather Bag is ₦46,000 😊" },
+    ]);
+    const res = await respondToConversation(admin, { businessId: BIZ, conversationId: id }, { provider });
+    expect(res).toMatchObject({ outcome: "replied", handoff: false });
+    expect((await outbound(id)).map((m) => m.body)).toEqual(["The Black Leather Bag is ₦46,000 😊"]);
+    const { data: conv } = await admin.from("conversations").select("needs_attention").eq("id", id).single();
+    expect(conv?.needs_attention).toBe(false);
+  });
+
+  it("notifies the team when the AI says it's connecting them but didn't hand off", async () => {
+    const id = await fixture("I need 20,000 naira parfaits");
+    const res = await respondToConversation(admin, { businessId: BIZ, conversationId: id }, { provider: providerFor([{ text: HANDOFF_LINE }]) });
+    expect(res).toMatchObject({ outcome: "replied", handoff: true });
+    const { data: conv } = await admin.from("conversations").select("ai_mode, needs_attention").eq("id", id).single();
+    expect(conv).toMatchObject({ ai_mode: "AI_ACTIVE", needs_attention: true });
+    const { data: ev } = await admin.from("conversation_events").select("data").eq("conversation_id", id).eq("type", "handoff_requested").single();
+    expect(JSON.stringify(ev?.data)).toContain("I need 20,000 naira parfaits");
   });
 
   it("accepts delivery fees and totals that tools returned", async () => {

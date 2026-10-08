@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { buildSystemPrompt, buildTranscript, HANDOFF_LINE, toWhatsAppText } from "@/services/ai/prompt";
+import { buildSystemPrompt, buildTranscript, groundingCorrection, HANDOFF_LINE, mentionsHandoff, toWhatsAppText } from "@/services/ai/prompt";
 import { AISdkProvider } from "@/services/ai/provider";
 
 import { scriptedModel } from "../helpers/mock-model";
@@ -73,6 +73,12 @@ describe("buildSystemPrompt", () => {
     const s = buildSystemPrompt(base);
     expect(s).toContain("If your own earlier messages in this conversation say something different");
     expect(s.indexOf("they are outdated")).toBeLessThan(s.indexOf("# Business profile"));
+  });
+
+  it("treats a budget as a normal order, not a reason to hand off", () => {
+    const s = buildSystemPrompt(base);
+    expect(s).toContain("If the customer gives a budget");
+    expect(s).toContain("Never hand off just because of a budget");
   });
 
   it("tells the AI to keep helping once the team has been notified", () => {
@@ -149,5 +155,21 @@ describe("buildTranscript", () => {
 describe("toWhatsAppText", () => {
   it("converts markdown to WhatsApp formatting", () => {
     expect(toWhatsAppText("## Price\nThe **bag** is [here](https://x.co/p)")).toBe("Price\nThe *bag* is here: https://x.co/p");
+  });
+});
+
+describe("price check retry", () => {
+  it("names the unverified amounts and points at the right tools", () => {
+    const note = groundingCorrection([1_150_000, 1_150_000, 1_500_000], "NGN");
+    expect(note).toContain("previous draft was NOT sent");
+    expect(note).toMatch(/₦11,500(\.00)?, ₦15,000/);
+    expect(note).toContain("get_order");
+    expect(note).toContain("don't repeat it");
+  });
+
+  it("recognises the handoff line inside a longer reply", () => {
+    expect(mentionsHandoff(HANDOFF_LINE)).toBe(true);
+    expect(mentionsHandoff(`Sorry! ${HANDOFF_LINE}`)).toBe(true);
+    expect(mentionsHandoff("Our parfaits come in five sizes.")).toBe(false);
   });
 });

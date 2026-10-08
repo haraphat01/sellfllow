@@ -11,7 +11,7 @@ import { canCollectPayments } from "@/services/payments/payments.service";
 import { isWithinServiceWindow, sendConversationText } from "@/services/whatsapp/outbound.service";
 
 import { checkPriceGrounding, collectGroundedAmounts } from "./grounding";
-import { buildSystemPrompt, buildTranscript, HANDOFF_LINE, toWhatsAppText, type PromptCapabilities } from "./prompt";
+import { buildSystemPrompt, buildTranscript, groundingCorrection, HANDOFF_LINE, mentionsHandoff, toWhatsAppText, type PromptCapabilities } from "./prompt";
 import { getAIProvider, type AIMessage, type AIProvider, type AIToolCall } from "./provider";
 import { applyHandoff, createSalesTools, type ToolContext } from "./tools";
 
@@ -35,6 +35,19 @@ async function loadAgentContext(admin: DbClient, businessId: string) {
   ]);
   if (!business || !agent || !settings) throw new Error("AI configuration missing for business");
   return { business, agent, settings };
+}
+
+/** Amounts of the customer's open and recent orders (lines, delivery, total), so the AI can recap them. */
+async function recentOrderAmounts(admin: DbClient, businessId: string, customerId: string) {
+  const { data } = await admin
+    .from("orders")
+    .select("subtotal_minor, delivery_fee_minor, discount_minor, total_minor, order_items(unit_price_minor, total_minor)")
+    .eq("business_id", businessId)
+    .eq("customer_id", customerId)
+    .in("status", ["pending_payment", "paid", "processing", "shipped"])
+    .order("created_at", { ascending: false })
+    .limit(5);
+  return data ?? [];
 }
 
 function policiesFrom(settings: Awaited<ReturnType<typeof loadAgentContext>>["settings"]) {
@@ -160,8 +173,36 @@ export async function respondToConversation(
   const messages = buildTranscript(history as never);
   const model = agent.model || serverEnv().AI_DEFAULT_MODEL;
 
+  // Recapping the customer's own orders isn't inventing a price.
+  const orderFacts = await recentOrderAmounts(admin, p.businessId, customer.id);
+  const groundedNow = () => collectGroundedAmounts([...turn.outputs, ...orderFacts]);
+  const logDenied = (reply: string, ungrounded: number[], retried: boolean) =>
+    admin.from("ai_actions").insert({
+      business_id: p.businessId,
+      conversation_id: p.conversationId,
+      ai_request_id: aiRequestId,
+      tool_name: "guardrail.price_grounding",
+      input: { reply },
+      output: { ungrounded_minor: ungrounded, retried },
+      status: "denied",
+    });
+
   const started = Date.now();
-  const response = await provider.generateResponse({ model, system, messages, tools, maxSteps: 6 });
+  let response = await provider.generateResponse({ model, system, messages, tools, maxSteps: 6 });
+  const usage = { ...response.usage };
+  let text = toWhatsAppText(response.text);
+  let grounding = checkPriceGrounding(text, groundedNow());
+
+  // One retry with the problem pointed out before giving up on the reply.
+  if (!grounding.ok && !turn.handoff) {
+    alog.info("ai.guardrail.ungrounded_price_retry", { ungrounded: grounding.ungrounded });
+    await logDenied(text, grounding.ungrounded, true);
+    response = await provider.generateResponse({ model, system: system + groundingCorrection(grounding.ungrounded, business.currency), messages, tools, maxSteps: 6 });
+    usage.inputTokens += response.usage.inputTokens;
+    usage.outputTokens += response.usage.outputTokens;
+    text = toWhatsAppText(response.text);
+    grounding = checkPriceGrounding(text, groundedNow());
+  }
   const latency = Date.now() - started;
 
   await admin.from("ai_usage").insert({
@@ -169,26 +210,16 @@ export async function respondToConversation(
     conversation_id: p.conversationId,
     ai_request_id: aiRequestId,
     model: response.model,
-    input_tokens: response.usage.inputTokens,
-    output_tokens: response.usage.outputTokens,
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
     latency_ms: latency,
   });
 
   // Guardrails on the final text.
-  let text = toWhatsAppText(response.text);
   let handedOff = Boolean(turn.handoff);
-  const grounding = checkPriceGrounding(text, collectGroundedAmounts(turn.outputs));
   if (!grounding.ok) {
     alog.warn("ai.guardrail.ungrounded_price", { ungrounded: grounding.ungrounded });
-    await admin.from("ai_actions").insert({
-      business_id: p.businessId,
-      conversation_id: p.conversationId,
-      ai_request_id: aiRequestId,
-      tool_name: "guardrail.price_grounding",
-      input: { reply: text },
-      output: { ungrounded_minor: grounding.ungrounded },
-      status: "denied",
-    });
+    await logDenied(text, grounding.ungrounded, false);
     if (!handedOff) {
       await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "unsure", summary: "The AI's reply mentioned a price it couldn't verify, so it wasn't sent. Please reply to the customer.", aiRequestId });
       handedOff = true;
@@ -198,6 +229,13 @@ export async function respondToConversation(
   if (!text) {
     if (!handedOff) return { outcome: "dropped", aiRequestId, reason: "empty reply" };
     text = HANDOFF_LINE;
+  }
+  // Telling the customer they're being connected to the team must actually notify the team.
+  if (!handedOff && mentionsHandoff(text)) {
+    alog.warn("ai.handoff_line_without_tool");
+    const asked = (last.body ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    await applyHandoff(admin, { businessId: p.businessId, conversationId: p.conversationId, reason: "unsure", summary: `The AI couldn't answer the customer${asked ? `: "${asked}"` : ""}. Please reply.`, aiRequestId });
+    handedOff = true;
   }
 
   // Re-check right before sending: a human may have taken over, or the customer

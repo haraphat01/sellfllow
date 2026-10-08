@@ -50,6 +50,17 @@ describe("checkPriceGrounding", () => {
     expect(checkPriceGrounding(reply, collectGroundedAmounts([{ price_minor: 4_600_000 }, { fee_minor: 300_000 }]))).toEqual({ ok: true });
   });
 
+  it("accepts ₦0 only when a tool returned it (e.g. free pickup)", () => {
+    const zones = collectGroundedAmounts([{ delivery_zones: [{ zone: "Pickup", fee_minor: 0 }, { zone: "Adeta", fee_minor: 100_000 }] }]);
+    expect(checkPriceGrounding("Pickup — ₦0 · Adeta — ₦1,000", zones)).toEqual({ ok: true });
+    expect(checkPriceGrounding("Delivery is ₦0 today!", grounded)).toEqual({ ok: false, ungrounded: [0] });
+  });
+
+  it("accepts a recap of the customer's own order", () => {
+    const order = collectGroundedAmounts([{ subtotal_minor: 1_050_000, delivery_fee_minor: 100_000, total_minor: 1_150_000, order_items: [{ unit_price_minor: 350_000, total_minor: 1_050_000 }] }]);
+    expect(checkPriceGrounding("Your order #1001 (3 Mini parfaits, ₦11,500) is awaiting payment.", order)).toEqual({ ok: true });
+  });
+
   it("passes replies with no amounts", () => {
     expect(checkPriceGrounding("Yes, we have it in black.", new Set()).ok).toBe(true);
   });

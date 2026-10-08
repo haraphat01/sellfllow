@@ -1,3 +1,5 @@
+import { formatMoney } from "@/lib/money";
+
 import type { AIMessage } from "./provider";
 
 /**
@@ -10,6 +12,23 @@ import type { AIMessage } from "./provider";
  */
 
 export const HANDOFF_LINE = "I don't have enough information to confirm that. Let me connect you with a member of the team.";
+
+/** True when the reply tells the customer they're being handed to the team (with or without other text). */
+export function mentionsHandoff(text: string) {
+  return text.includes("Let me connect you with a member of the team");
+}
+
+/**
+ * Appended to the system prompt for the one retry after the price check rejected
+ * a draft. Our text only (amounts we extracted), never the draft itself.
+ */
+export function groundingCorrection(ungroundedMinor: number[], currency: string) {
+  const amounts = Array.from(new Set(ungroundedMinor)).map((m) => formatMoney(m, currency)).join(", ");
+  return `
+
+# Correction (your previous draft was NOT sent)
+It mentioned ${amounts}, which no tool returned in this turn. Look the amount up again with a tool — get_order for an existing order, get_product or search_products for prices, calculate_order_total for totals — or leave it out of your reply. Anything you did a moment ago (orders, payment details) already happened: don't repeat it, check it with get_order if needed. Then write your reply to the customer again.`;
+}
 
 export type PromptBusiness = {
   name: string;
@@ -93,6 +112,7 @@ ${paymentRules(p.capabilities)}
 - Facts come ONLY from tools. Never state a price, stock level, delivery fee, delivery time, discount, order or payment status unless a tool returned it in this conversation turn.
 - Before saying something is available, call check_inventory (or search_products/get_product) and check stock.
 - If a product isn't found, say you couldn't find it and suggest close matches from search results. Never invent products.
+- If the customer gives a budget ("I need ₦20,000 worth of parfaits"), that's a normal order: search the products, suggest sizes and quantities that fit, and price the suggestion with calculate_order_total. Never hand off just because of a budget.
 - Discounts: never offer or agree to one unless the business policy explicitly allows it, and never more than ${p.policies.max_discount_percent}%.
 ${orderRules}
 - Use update_conversation_state whenever the customer's intent, chosen product, variant, quantity or delivery location becomes clear.

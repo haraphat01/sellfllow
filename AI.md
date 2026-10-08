@@ -131,9 +131,15 @@ Code: `src/services/knowledge/faqs.service.ts`, `src/components/knowledge/faq-ma
   quoted data (can't close their tags) → structured state → transcript. Customer
   text only ever appears as user messages.
 * **Price grounding:** every money amount in the reply must equal an amount a
-  tool returned this turn (or a quantity multiple / sum, e.g. item + delivery).
-  Otherwise the reply isn't sent: the customer gets the handoff line and the team
-  is flagged (`ai_actions.tool_name = guardrail.price_grounding`, status `denied`).
+  tool returned this turn, or one from the customer's own recent orders (or a
+  quantity multiple / sum, e.g. item + delivery; ₦0 only if a tool returned it).
+  A failing draft isn't sent: the AI gets **one retry** with the unverified
+  amounts named (`groundingCorrection`), then the customer gets the handoff line
+  and the team is flagged (`ai_actions.tool_name = guardrail.price_grounding`,
+  status `denied`, `output.retried` true for the first draft).
+* **Handoff line always notifies:** if a reply tells the customer they're being
+  connected to the team but the AI didn't call `handoff_to_human`, SellFlow
+  applies the handoff itself, with the customer's message in the summary.
 * **Discounts:** capped by `ai_settings.max_discount_percent` in the rules; any
   discounted price is also caught by grounding.
 * **Human in control:** takeover mid-generation drops the AI reply; human mode,

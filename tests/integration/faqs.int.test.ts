@@ -73,9 +73,10 @@ describe.skipIf(!run)("Business Q&A knowledge base (integration)", { timeout: 60
   it("finds the right answer for real customer phrasing", async () => {
     expect((await searchFaqs(admin, BIZ, "abeg una dey deliver for ilorin?", 3))[0]?.question).toBe("Do you deliver outside Lagos?");
     expect((await searchFaqs(admin, BIZ, "can i come collect it myself", 3))[0]?.question).toBe("Can I pick up my order?");
-    // Another business never sees these.
+    // Another business never sees these (it may have Q&As of its own that match).
     const { data: other } = await admin.from("businesses").select("id").neq("id", BIZ).limit(1).single();
-    expect(await searchFaqs(admin, other!.id, "deliver outside Lagos", 3)).toEqual([]);
+    const otherHits = await searchFaqs(admin, other!.id, "deliver outside Lagos", 10);
+    expect(otherHits.filter((h) => faqIds.includes(h.id))).toEqual([]);
   });
 
   it("the AI answers from the Q&A, including its price", async () => {
